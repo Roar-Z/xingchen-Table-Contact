@@ -28,6 +28,7 @@ import {
 import 'element-plus/dist/index.css'
 import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
+import BridgeAgent from '../components/BridgeAgent.vue'
 import { api, apiState } from '../api'
 import {
   railMemory,
@@ -53,6 +54,37 @@ const TOPBAR = {
   desc: '把源表、目标模板和一句话目标交给智能体，它会自己读表、查记忆、规划映射，你只需要核对方案。'
 }
 useTopbar(TOPBAR)
+
+/*
+ * 两种工作模式：
+ * standard —— 源表 + 目标模板，逐列核对，适合明确的转换任务；
+ * agent    —— 上传整个数据集（zip / 文件夹），一句话业务目标，智能体自己找表、对齐、计算、导出。
+ * 模式记在 sessionStorage 里，刷新页面还停在原来那一页。
+ */
+const MODE_KEY = 'huibiao.mode.v1'
+const workspaceMode = ref('standard')
+try {
+  if (sessionStorage.getItem(MODE_KEY) === 'agent') workspaceMode.value = 'agent'
+} catch (e) {
+  // 隐私模式下 sessionStorage 不可用，用默认模式即可
+}
+
+const TOPBAR_AGENT = {
+  title: '智能体工作台 · 跨系统桥接',
+  desc: '整个数据集（压缩包或文件夹）交上来，说一句业务目标，智能体自己找表、对齐字段、跨表计算，输出标准表和异常清单。'
+}
+
+function switchMode(mode) {
+  if (workspaceMode.value === mode) return
+  workspaceMode.value = mode
+  try {
+    sessionStorage.setItem(MODE_KEY, mode)
+  } catch (e) {
+    // 同上
+  }
+  useTopbar(mode === 'agent' ? TOPBAR_AGENT : TOPBAR)
+  railVisible.value = mode !== 'agent'
+}
 
 /* ============ 区块 1：文件 ============ */
 const sourceFiles = ref([]) // 源数据表，允许多个
@@ -1475,8 +1507,8 @@ onMounted(() => {
 // 所以要在这里把顶栏和右侧状态轨交还出去，回来时再重新挂上，
 // 中间的轮询继续跑，任务跑完了切回来能直接看到结果。
 onActivated(() => {
-  useTopbar(TOPBAR)
-  railVisible.value = true
+  useTopbar(workspaceMode.value === 'agent' ? TOPBAR_AGENT : TOPBAR)
+  railVisible.value = workspaceMode.value !== 'agent'
 })
 
 onDeactivated(() => {
@@ -1702,7 +1734,31 @@ onBeforeUnmount(() => {
       后端没有连上，文件解析和任务执行都不可用。先在 backend 目录运行 start.cmd，再刷新页面。
     </div>
 
-    <div class="ad-layout">
+    <!-- 模式切换：标准模式按模板逐列走，智能体模式整包交给它 -->
+    <div class="ad-modes">
+      <button
+        class="ad-mode"
+        :class="{ 'is-on': workspaceMode === 'standard' }"
+        type="button"
+        @click="switchMode('standard')"
+      >
+        <span class="ad-mode-name">标准模式</span>
+        <em>源表 + 目标模板，逐列核对，适合明确的转换任务</em>
+      </button>
+      <button
+        class="ad-mode is-agent"
+        :class="{ 'is-on': workspaceMode === 'agent' }"
+        type="button"
+        @click="switchMode('agent')"
+      >
+        <span class="ad-mode-name">智能体模式<b class="ad-core">核心</b></span>
+        <em>上传压缩包或文件夹，说一句业务目标，自己找表、对齐字段、出标准表</em>
+      </button>
+    </div>
+
+    <BridgeAgent v-if="workspaceMode === 'agent'" />
+
+    <div v-if="workspaceMode === 'standard'" class="ad-layout">
       <div class="ad-work">
         <!-- 阶段条：3 段走完一单 -->
         <ol class="ad-stages">
@@ -3598,6 +3654,75 @@ onBeforeUnmount(() => {
 /* ---------- 布局：工作区 + 智能体状态轨 ---------- */
 .ad-layout {
   display: block;
+}
+
+/* ---------- 模式切换 ---------- */
+.ad-modes {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ad-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 11px 14px;
+  border: 1px solid var(--ad-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ad-ink-3);
+  text-align: left;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.ad-mode:hover {
+  border-color: #cfd8e8;
+  background: #fbfcfe;
+}
+
+.ad-mode.is-on {
+  border-color: #c9d8f8;
+  background: linear-gradient(180deg, #f7faff 0%, #fff 100%);
+  box-shadow: inset 0 -2px 0 var(--ad-blue);
+}
+
+.ad-mode.is-agent .ad-mode-name {
+  color: var(--ad-blue);
+}
+
+.ad-mode-name {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--ad-ink-2);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ad-mode.is-on .ad-mode-name {
+  color: var(--ad-ink);
+}
+
+.ad-mode em {
+  color: var(--ad-ink-3);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+/* 智能体模式的“核心”标签：高亮，但只占一个小角，不抢标题 */
+.ad-core {
+  padding: 1px 6px;
+  border: 1px solid #f0d9b5;
+  border-radius: 999px;
+  background: #fff5e6;
+  color: #a96400;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .ad-work {

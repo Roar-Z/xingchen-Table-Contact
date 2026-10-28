@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -52,6 +53,16 @@ public class ApiExceptionHandler {
     public ResponseEntity<Map<String, Object>> methodNotAllowed(HttpRequestMethodNotSupportedException e) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(Map.of("detail", "这个接口不支持 " + e.getMethod() + " 请求"));
+    }
+
+    /**
+     * 上传的数据集超过 multipart 限制（application.yml 里 30MB / 60MB）。
+     * 直接说清楚，比抛一个看不懂的 500 好。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> tooLarge(MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("detail", "数据集太大了，压缩包请控制在 30MB 以内，或者拆成两次上传"));
     }
 
     @ExceptionHandler(Exception.class)

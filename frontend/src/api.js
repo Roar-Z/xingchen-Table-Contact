@@ -178,6 +178,62 @@ export const api = {
     return `${BASE}/api/tasks/${encodeURIComponent(taskId)}/download/${encodeURIComponent(artifact)}`
   },
 
+  /* ==================== 智能体模式：跨系统桥接 ==================== */
+
+  // 上传整个数据集：一个 zip，或者文件夹里选中的一批 Excel
+  bridgeCreate(files, name, source = 'files') {
+    const fd = new FormData()
+    Array.from(files || []).forEach((file) => fd.append('files', file))
+    fd.append('name', name || '')
+    fd.append('source', source)
+    return request('/api/bridge/datasets', { method: 'POST', body: fd })
+  },
+
+  bridgeDatasets() {
+    return request('/api/bridge/datasets')
+  },
+
+  bridgeDataset(id) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}`)
+  },
+
+  // 自然语言业务指令 → 规划方案，只规划不执行
+  bridgePlan(id, instruction) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/plan`, {
+      method: 'POST',
+      body: JSON.stringify({ instruction })
+    })
+  },
+
+  bridgeRun(id) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/run`, { method: 'POST' })
+  },
+
+  // kind=ok 标准表 / kind=anomaly 异常清单
+  bridgeRows(id, params = {}) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/rows${query(params)}`)
+  },
+
+  bridgeRules() {
+    return request('/api/bridge/rules')
+  },
+
+  bridgeAddRule(standard, alias) {
+    return request('/api/bridge/rules', { method: 'POST', body: JSON.stringify({ standard, alias }) })
+  },
+
+  bridgeDeleteRule(alias) {
+    return request(`/api/bridge/rules${query({ alias })}`, { method: 'DELETE' })
+  },
+
+  bridgeStandardFields() {
+    return request('/api/bridge/standard-fields')
+  },
+
+  bridgeDownloadUrl(id, artifact) {
+    return `${BASE}/api/bridge/datasets/${encodeURIComponent(id)}/download/${encodeURIComponent(artifact)}`
+  },
+
   /* ==================== 表格智作 ==================== */
 
   // 我的表格：名称或列名模糊匹配
