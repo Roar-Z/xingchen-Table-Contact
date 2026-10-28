@@ -1,0 +1,27 @@
+# ---------- 构建产物 ----------
+backend/target/
+frontend/node_modules/
+frontend/dist/
+
+# ---------- 运行时数据（上传表、任务记录、导出结果） ----------
+backend/data/
+
+# ---------- 密钥：只保留示例，真实配置留在本机 ----------
+backend/config/application.yml
+.env
+.env.*
+
+# ---------- 本机资料 / 内部文档，不入库 ----------
+docs/
+sample_data/
+backend/src/main/resources/static/docs/
+
+# ---------- 编辑器与系统文件 ----------
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---------- 日志 ----------
+*.log

@@ -1,0 +1,38 @@
+server:
+  port: 8000
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: huibiao-backend
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 60MB
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    property-naming-strategy: SNAKE_CASE
+  mvc:
+    async:
+      request-timeout: 30000
+
+app:
+  version: 0.8.2
+  data-dir: data
+  sample-dir: ../sample_data/raw
+  frontend-dir: ../frontend/dist
+  seed-demo: true
+  llm:
+    enabled: ${HUBIAO_LLM_ENABLED:false}
+    base-url: ${HUBIAO_LLM_BASE_URL:http://127.0.0.1:11434/v1}
+    api-key: ${HUBIAO_LLM_API_KEY:not-needed}
+    model: ${HUBIAO_LLM_MODEL:qwen2.5:14b}
+
+logging:
+  level:
+    com.xingchen.huibiao: INFO
+    org.apache.poi: WARN

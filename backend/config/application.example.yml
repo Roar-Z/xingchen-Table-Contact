@@ -1,0 +1,21 @@
+# 大模型配置模板（复制到 backend/config/application.yml 后再填自己的密钥）
+#
+#   backend/config/application.yml 已被 .gitignore 排除，不会进仓库；
+#   直接把真实密钥写在下面这份文件里会被提交，请务必先复制成 application.yml。
+#
+# 不配置也能跑：默认 enabled=false，会退回纯规则的字段匹配。
+
+app:
+  llm:
+    enabled: ${HUBIAO_LLM_ENABLED:false}
+
+    # OpenAI 兼容地址，结尾要带 /v1
+    # 通义千问：https://dashscope.aliyuncs.com/compatible-mode/v1   模型 qwen-plus
+    # DeepSeek：https://api.deepseek.com/v1                         模型 deepseek-chat
+    # 本地 Ollama：http://127.0.0.1:11434/v1                        模型 qwen2.5:14b
+    base-url: ${HUBIAO_LLM_BASE_URL:http://127.0.0.1:11434/v1}
+
+    # 密钥只从环境变量读取，仓库里不放任何真实密钥
+    api-key: ${HUBIAO_LLM_API_KEY:not-needed}
+
+    model: ${HUBIAO_LLM_MODEL:qwen2.5:14b}
