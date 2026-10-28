@@ -9,7 +9,7 @@
  * 说明：后端点位都集中在 api.js，本文件只负责页面状态和交互，
  * 后续替换成别的智能体服务时改 api.js 即可，页面不用重写。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ElButton,
@@ -41,14 +41,18 @@ import {
 import { useToast } from '../toast'
 import { clearTopbar, useTopbar } from '../topbar'
 
+// 组件名要和 App.vue 里 keep-alive 的 include 一致，否则切页面会重新挂载、任务全丢
+defineOptions({ name: 'AgentWorkbench' })
+
 const router = useRouter()
 const { show } = useToast()
 
 // 页面标题和说明统一放到顶栏，页面正文不再重复一遍
-useTopbar({
+const TOPBAR = {
   title: '智能体工作台',
   desc: '把源表、目标模板和一句话目标交给智能体，它会自己读表、查记忆、规划映射，你只需要核对方案。'
-})
+}
+useTopbar(TOPBAR)
 
 /* ============ 区块 1：文件 ============ */
 const sourceFiles = ref([]) // 源数据表，允许多个
@@ -118,6 +122,8 @@ const editSamples = computed(() => {
 
 let pollTimer = null
 let analyzeSeq = 0
+// 「试试」里的句子只负责填进输入框，由用户确认后再提交，不直接发给智能体
+const editInputRef = ref(null)
 
 /* ---------------- 规划进度 ----------------
  * 后端是一次性返回结果的，拿不到逐步骤实时进度；这里用“阶段文案 + 渐进进度条 + 已等待秒数”
@@ -369,18 +375,30 @@ const planTiles = computed(() => {
   ]
 })
 
+/* 清空这一单：文件、方案、结果和本地现场一起清掉，方便重新交接 */
 function resetAll() {
+  stopPolling()
+  stopPlanProgress()
   sourceFiles.value = []
   templateFile.value = null
   brief.value = ''
+  isolate.value = true
+  strictFormat.value = false
   intent.value = null
   mappings.value = []
   mappingConfirmed.value = false
   analyzeError.value = ''
+  planStale.value = false
   resetAgent()
   resetResult()
   step.value = 1
   reached.value = 1
+  try {
+    sessionStorage.removeItem(STORE_KEY)
+  } catch (e) {
+    // 存储不可用时忽略，内存状态已经清空
+  }
+  show('已清空，可以重新交接一单')
 }
 
 const quickRules = [
@@ -1348,10 +1366,128 @@ watch(railMemoryRequest, (n) => {
   if (n) memoryVisible.value = true
 })
 
+/* ---------- 断点续看：刷新 / 直接输地址后，回到工作台还能接着看 ----------
+ * 站内切页已经由 App.vue 的 keep-alive 保住内存状态；这里再把“现场”写进
+ * sessionStorage，覆盖 F5 刷新、开发时热更新这几种情况。
+ * 只存元数据、规划和任务 ID，结果行不存（结果表按 task_id 从后端分页拉）。
+ */
+const STORE_KEY = 'huibiao.workbench.v1'
+const STORE_TTL = 12 * 60 * 60 * 1000
+let saveTimer = null
+
+function saveSnapshot() {
+  try {
+    sessionStorage.setItem(STORE_KEY, JSON.stringify({
+      at: Date.now(),
+      sourceFiles: sourceFiles.value,
+      templateFile: templateFile.value,
+      brief: brief.value,
+      isolate: isolate.value,
+      strictFormat: strictFormat.value,
+      intent: intent.value,
+      mappings: mappings.value,
+      mappingConfirmed: mappingConfirmed.value,
+      planStale: planStale.value,
+      agentSteps: agentSteps.value,
+      agentFixes: agentFixes.value,
+      agentHandoff: agentHandoff.value,
+      agentExperienceLabel: agentExperienceLabel.value,
+      agentMode: agentMode.value,
+      agentFallback: agentFallback.value,
+      agentSummary: agentSummary.value,
+      taskId: task.value?.id || '',
+      step: step.value,
+      reached: reached.value,
+      resultTab: resultTab.value
+    }))
+  } catch (e) {
+    // 隐私模式或存储被禁用时静默跳过，不影响正常使用
+  }
+}
+
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(saveSnapshot, 300)
+}
+
+function restoreSnapshot() {
+  let saved = null
+  try {
+    saved = JSON.parse(sessionStorage.getItem(STORE_KEY) || 'null')
+  } catch (e) {
+    saved = null
+  }
+  if (!saved || !saved.at || Date.now() - saved.at > STORE_TTL) {
+    sessionStorage.removeItem(STORE_KEY)
+    return
+  }
+  sourceFiles.value = Array.isArray(saved.sourceFiles) ? saved.sourceFiles : []
+  templateFile.value = saved.templateFile || null
+  brief.value = saved.brief || ''
+  isolate.value = saved.isolate !== false
+  strictFormat.value = !!saved.strictFormat
+  intent.value = saved.intent || null
+  mappings.value = Array.isArray(saved.mappings) ? saved.mappings : []
+  mappingConfirmed.value = !!saved.mappingConfirmed
+  planStale.value = !!saved.planStale
+  agentSteps.value = saved.agentSteps || []
+  agentFixes.value = saved.agentFixes || []
+  agentHandoff.value = saved.agentHandoff || []
+  agentExperienceLabel.value = saved.agentExperienceLabel || ''
+  agentMode.value = saved.agentMode || 'rules'
+  agentFallback.value = !!saved.agentFallback
+  agentSummary.value = saved.agentSummary || ''
+  resultTab.value = saved.resultTab || 'ok'
+  // reached 必须先于 step 恢复，否则 maxStep 的 watch 会把 step 压回第 1 步
+  reached.value = Math.min(3, Math.max(1, Number(saved.reached) || 1))
+  step.value = Math.min(reached.value, Math.max(1, Number(saved.step) || 1))
+  if (saved.taskId) {
+    api.task(saved.taskId)
+      .then((data) => {
+        task.value = data
+        if (['queued', 'running'].includes(data.status)) poll(data.id)
+      })
+      .catch(() => {
+        // 任务已被清理（换机器、后端数据目录重置）时当作没有现场，不打扰用户
+      })
+  }
+}
+
+watch(
+  () => [
+    sourceFiles.value, templateFile.value, brief.value, isolate.value, strictFormat.value,
+    intent.value, mappings.value, mappingConfirmed.value, planStale.value,
+    agentSteps.value, agentFixes.value, agentHandoff.value, agentSummary.value,
+    task.value?.id, step.value, reached.value, resultTab.value
+  ],
+  scheduleSave,
+  { deep: true }
+)
+
 onMounted(() => {
+  restoreSnapshot()
   railVisible.value = true
   loadSchemes()
   loadAgentExperience()
+})
+
+// 被 keep-alive 缓存后，离开页面只会触发 deactivated（不会卸载），
+// 所以要在这里把顶栏和右侧状态轨交还出去，回来时再重新挂上，
+// 中间的轮询继续跑，任务跑完了切回来能直接看到结果。
+onActivated(() => {
+  useTopbar(TOPBAR)
+  railVisible.value = true
+})
+
+onDeactivated(() => {
+  // 切走前把最新的现场落一次盘，别等 300ms 的防抖
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  saveSnapshot()
+  clearTopbar()
+  railVisible.value = false
 })
 
 /* ============ 区块 3：业务规则 ============ */
@@ -1491,6 +1627,14 @@ function downloadAnomaliesCsv() {
  * 一句话改结果：后端负责把话翻译成操作（改值 / 加减 / 删行 / 排序 / 加列），
  * 再按原源表重算、重放、重新导出，页面只负责把结果和修改记录展示出来。
  */
+// 点「试试」里的句子只是填词，真正的提交交给「让智能体改」或回车，
+// 避免点一下就把请求发给大模型、用户还不知道改了什么。
+function useEditSample(text) {
+  if (editBusy.value) return
+  editInput.value = text
+  nextTick(() => editInputRef.value?.focus?.())
+}
+
 async function submitEdit(text) {
   const instruction = String(text ?? editInput.value).trim()
   if (!instruction) {
@@ -1540,6 +1684,11 @@ async function undoEdit() {
 }
 
 onBeforeUnmount(() => {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  saveSnapshot()
   stopPolling()
   stopPlanProgress()
   clearTopbar()
@@ -1587,9 +1736,20 @@ onBeforeUnmount(() => {
               <h2>把这一单交给智能体</h2>
               <p>源表和目标模板你来给，读表、理解口径、写映射由它完成。</p>
             </div>
-            <span class="ad-head-state" :class="`is-${agentStateTone}`">
-              <i />{{ agentStateText }}
-            </span>
+            <div class="ad-head-tools">
+              <span class="ad-head-state" :class="`is-${agentStateTone}`">
+                <i />{{ agentStateText }}
+              </span>
+              <!-- 现场会跨刷新保留，所以给一个明确的“重开一单”出口 -->
+              <button
+                v-if="sourceFiles.length || task"
+                class="ad-ghost"
+                title="清空当前文件、规划和结果，重新交接一单"
+                @click="resetAll"
+              >
+                清空重来
+              </button>
+            </div>
           </header>
 
           <div class="ad-card-body">
@@ -2242,6 +2402,7 @@ onBeforeUnmount(() => {
 
                 <div class="ad-edit-compose">
                   <el-input
+                    ref="editInputRef"
                     v-model="editInput"
                     type="textarea"
                     :autosize="{ minRows: 1, maxRows: 4 }"
@@ -2263,7 +2424,8 @@ onBeforeUnmount(() => {
                     :key="text"
                     class="ad-chip"
                     :disabled="editBusy"
-                    @click="submitEdit(text)"
+                    title="点一下填进输入框，改完再点「让智能体改」"
+                    @click="useEditSample(text)"
                   >
                     {{ text }}
                   </button>
@@ -3570,6 +3732,14 @@ onBeforeUnmount(() => {
   padding: 20px 24px 18px;
   border-bottom: 1px solid var(--ad-line-soft);
   background: linear-gradient(180deg, #fcfcfe 0%, #fff 78%);
+}
+
+/* 状态胶囊 + 「清空重来」并排，右对齐 */
+.ad-head-tools {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  align-items: center;
 }
 
 .ad-kicker {
