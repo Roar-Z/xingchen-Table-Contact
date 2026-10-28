@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
@@ -24,6 +24,8 @@ let timer = null
 const editInput = ref('')
 const editBusy = ref(false)
 const editError = ref('')
+// 点「试试」只填词，顺带把焦点放到输入框
+const editInputRef = ref(null)
 
 const editLog = computed(() => task.value?.config?.edits || [])
 const editChanged = computed(() =>
@@ -202,6 +204,13 @@ async function rerunTask() {
  * 一句话改结果：后端把话翻译成操作（改值 / 加减 / 删行 / 排序 / 加列），
  * 再按原源表重算、重放、重新导出，页面只负责展示结果和修改记录。
  */
+// 「试试」里的句子只填进输入框，不直接发给模型
+function useEditSample(text) {
+  if (editBusy.value) return
+  editInput.value = text
+  nextTick(() => editInputRef.value?.focus?.())
+}
+
 async function submitEdit(text) {
   const instruction = String(text ?? editInput.value).trim()
   if (!instruction) {
@@ -452,6 +461,7 @@ onUnmounted(stopPolling)
 
                 <div class="edit-compose">
                   <textarea
+                    ref="editInputRef"
                     v-model="editInput"
                     class="textarea edit-input"
                     :disabled="editBusy"
@@ -471,7 +481,8 @@ onUnmounted(stopPolling)
                     :key="text"
                     class="btn btn-sm"
                     :disabled="editBusy"
-                    @click="submitEdit(text)"
+                    title="点一下填进输入框，改完再点「让智能体改」"
+                    @click="useEditSample(text)"
                   >
                     {{ text }}
                   </button>
