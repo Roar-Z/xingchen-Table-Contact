@@ -107,6 +107,35 @@ public class BridgeAgentService {
             "(?:(\\d{4})\\s*年)?\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})?\\s*日?\\s*(?:到|至|~|—)"
                     + "\\s*(?:(\\d{4})\\s*年)?\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})?\\s*日?");
 
+    /** 规划器能调用的原子能力：模型只能从这份清单里挑，挑完的参数由下面的执行器落地 */
+    private static final Map<String, String> TOOL_CATALOG = new LinkedHashMap<>();
+
+    static {
+        TOOL_CATALOG.put("scan_dataset", "遍历数据集目录，列出所有表格和业务类型");
+        TOOL_CATALOG.put("parse_sheets", "读每张表的表头、行数和样例值");
+        TOOL_CATALOG.put("detect_kind", "按文件名和表头判断这是 HR / ERP / OA 的哪张表");
+        TOOL_CATALOG.put("align_fields", "把各系统不一样的列名对齐到统一的标准字段");
+        TOOL_CATALOG.put("join_tables", "按工号或姓名把多张表关联成一人一行");
+        TOOL_CATALOG.put("filter_rows", "按日期区间、在职状态等条件筛掉不符合的行");
+        TOOL_CATALOG.put("compute", "跨表聚合与加减计算");
+        TOOL_CATALOG.put("isolate_anomaly", "把命中异常检查的行隔离到单独清单");
+        TOOL_CATALOG.put("standardize_export", "按目标系统的列顺序导出标准表");
+    }
+
+    private static final Map<String, String> TOOL_TITLES = Map.of(
+            "scan_dataset", "扫描数据集",
+            "parse_sheets", "解析表格",
+            "detect_kind", "识别业务表",
+            "align_fields", "字段语义对齐",
+            "join_tables", "跨表关联",
+            "filter_rows", "条件筛选",
+            "compute", "业务计算",
+            "isolate_anomaly", "异常隔离",
+            "standardize_export", "标准化导出"
+    );
+
+    private static final Set<String> ANOMALY_TYPES = Set.of("join", "blank", "date", "numeric", "garbled", "duplicate");
+
     private final BridgeStore store;
     private final ExcelService excel;
     private final HeaderCatalog catalog;
@@ -244,81 +273,227 @@ public class BridgeAgentService {
         plan.plannedAt = store.now();
         long start = System.currentTimeMillis();
 
-        int totalColumns = dataset.tables.stream().mapToInt(t -> t.columns.size()).sum();
-        plan.steps.add(step("scan_dataset", "扫描数据集",
-                "遍历目录，找到 " + dataset.tables.size() + " 张表、" + totalColumns + " 个字段",
-                System.currentTimeMillis() - start));
-
-        long t = System.currentTimeMillis();
-        plan.steps.add(step("parse_sheets", "解析表格",
-                "按表头识别规则读出每张表的列、行数和样例值（" + totalColumns + " 列）", 0));
-
-        t = System.currentTimeMillis();
-        plan.steps.add(step("detect_kind", "识别业务表", kindSummary(dataset), 0));
-
-        t = System.currentTimeMillis();
-        List<BridgeDataset.Align> aligns = align(dataset);
+        // 规则先算一份完整底稿：没开大模型时也能跑，开了大模型就在这份底稿上重写
+        plan.aligns = align(dataset);
         Set<String> labels = new LinkedHashSet<>();
-        for (BridgeDataset.Align align : aligns) labels.add(align.label);
-        plan.aligns = aligns;
-        plan.steps.add(step("align_fields", "字段语义对齐",
-                "把不同系统的 " + aligns.size() + " 个列名对到 " + labels.size() + " 个标准字段，"
-                        + crossSystemHint(dataset, aligns), 0));
+        for (BridgeDataset.Align align : plan.aligns) labels.add(align.label);
 
-        t = System.currentTimeMillis();
-        BridgeDataset.Table primary = pickPrimary(dataset, aligns);
-        Map<String, String> reps = tableRep(dataset, aligns, primary);
+        BridgeDataset.Table primary = pickPrimary(dataset, plan.aligns);
+        Map<String, String> reps = tableRep(dataset, plan.aligns, primary);
         plan.sources = buildSources(dataset, primary, reps);
-        plan.joinKey = joinKeyOf(primary, aligns, dataset);
+        plan.joinKey = joinKeyOf(primary, plan.aligns, dataset);
         plan.joinLabel = plan.joinKey == null ? "" : labelOfField(plan.joinKey);
-        plan.steps.add(step("join_tables", "跨表关联",
-                primary == null ? "只有一张表，跳过关联"
-                        : "以 " + primary.file + " 为主表，按「" + plan.joinLabel + "」左连接其他表", 0));
-        plan.notes.addAll(duplicateKindNotes(dataset, reps));
-
-        t = System.currentTimeMillis();
-        plan.computes = buildComputes(dataset, aligns, text, labels);
-        plan.filters = buildFilters(dataset, aligns, text, labels, plan);
-        plan.steps.add(step("compute", "业务计算与筛选",
-                plan.computes.isEmpty() ? "没有识别到需要计算的列，按原样标准化"
-                        : "生成 " + plan.computes.size() + " 个计算列：" + String.join("、",
-                        plan.computes.stream().map(c -> c.name).toList()), 0));
-
-        t = System.currentTimeMillis();
-        plan.anomalyRules = buildAnomalyRules(text, labels);
-        plan.steps.add(step("isolate_anomaly", "异常隔离",
-                plan.anomalyRules.size() + " 条检查规则，命中就进异常清单，不影响正常行", 0));
-
+        plan.computes = buildComputes(dataset, plan.aligns, text, labels);
+        plan.filters = buildFilters(dataset, plan.aligns, text, labels, plan);
+        plan.anomalyChecks = buildAnomalyChecks(plan, labels, text);
         plan.outputColumns = buildOutputColumns(plan, labels, text);
-        plan.steps.add(step("standardize_export", "标准化导出",
-                "按目标系统习惯输出 " + plan.outputColumns.size() + " 列标准表 + 异常清单（待用户确认后执行）", 0));
-        plan.steps.get(plan.steps.size() - 1).state = "pending";
+        plan.notes.addAll(duplicateKindNotes(dataset, reps));
+        plan.notes.addAll(missingNotes(text, plan.aligns));
 
-        // 模型只做复核和补充，规则方案本身就是完整可执行的
+        // 规划器：让模型按业务目标重新拆子任务、定参数；模型不可用就保留规则底稿
         ChatModel model = chat.getIfAvailable();
+        boolean modelPlanned = false;
         if (model != null) {
             try {
-                String answer = model.chat(refinePrompt(dataset, text, plan));
-                applyModelPlan(plan, answer, labels, text);
-                plan.mode = "llm";
-                plan.steps.add(step("model_review", "大模型复核方案",
-                        "结合自然语言目标检查关联键、计算列和筛选条件", 0));
+                String answer = model.chat(plannerPrompt(dataset, text, plan, labels));
+                modelPlanned = applyModelPlan(plan, answer, labels, dataset);
+                if (!modelPlanned) plan.notes.add("大模型返回的任务计划不完整，已保留规则方案");
             } catch (Exception e) {
-                plan.notes.add("大模型复核没成功，已用规则方案：" + e.getMessage());
-                plan.mode = "rules";
+                plan.notes.add("大模型规划没成功，已用规则方案：" + e.getMessage());
             }
         } else {
-            plan.notes.add("当前没有启用大模型，方案完全由规则生成，可在配置里打开 app.llm.enabled");
+            plan.notes.add("当前没有启用大模型：子任务由内置规划规则拆解，可在配置里打开 app.llm.enabled");
         }
 
+        plan.mode = modelPlanned ? "llm" : "rules";
+        if (modelPlanned) {
+            // 模型判定这次不用跨表时，就真的只留一张表：
+            // 否则方案里写着“不关联”，执行时却把别的表悄悄并进来，行数对不上
+            boolean joinPlanned = plan.steps.stream().anyMatch(s -> "join_tables".equals(s.tool));
+            if (!joinPlanned) {
+                BridgeDataset.Table solo = soloTable(dataset, plan);
+                if (solo != null) {
+                    BridgeDataset.Source source = new BridgeDataset.Source();
+                    source.tableId = solo.id;
+                    source.role = "主表";
+                    source.reason = "按指令只处理这一张表，不跨表关联";
+                    plan.sources = new ArrayList<>(List.of(source));
+                    plan.joinKey = null;
+                    plan.joinLabel = "";
+                    plan.notes.add("按指令只处理 " + solo.file + "，其余表这次不参与");
+                }
+            }
+            pruneSteps(plan);
+            ensureExportStep(plan);
+        } else {
+            buildRuleSteps(dataset, plan, start);
+        }
+
+        // 异常检查和最终参与的表对一遍：没参与的表里没有的字段，检查就撤掉，
+        // 否则“入职日期为空”会把人人都判成异常（薪资表根本没这一列）
+        alignChecksToTables(plan);
+
+        plan.anomalyRules = plan.anomalyChecks.stream()
+                .map(check -> check.reason)
+                .filter(reason -> reason != null && !reason.isBlank())
+                .distinct().toList();
         plan.summary = plan.summary == null || plan.summary.isBlank() ? autoSummary(dataset, plan) : plan.summary;
-        plan.notes.addAll(missingNotes(text, aligns));
+
         dataset.plan = plan;
         dataset.status = "planned";
         store.save(dataset);
-        log.info("桥接数据集 {} 规划完成：{} 张表，{} 个对齐字段，模式 {}",
-                dataset.id, dataset.tables.size(), aligns.size(), plan.mode);
+        log.info("桥接数据集 {} 规划完成：{} 张表，{} 个对齐字段，{} 步，模式 {}",
+                dataset.id, dataset.tables.size(), plan.aligns.size(), plan.steps.size(), plan.mode);
         return dataset;
+    }
+
+    /**
+     * 没开大模型时，按方案的实际内容拼子任务：单表不写关联、没有计算就不写计算，
+     * 换一条指令，步骤自然不一样，而不是固定八步。
+     */
+    private void buildRuleSteps(BridgeDataset dataset, BridgeDataset.Plan plan, long start) {
+        int totalColumns = dataset.tables.stream().mapToInt(t -> t.columns.size()).sum();
+        plan.steps.add(step("scan_dataset", "扫描数据集",
+                "遍历数据集目录，找到 " + dataset.tables.size() + " 张表、" + totalColumns + " 个字段",
+                System.currentTimeMillis() - start));
+        plan.steps.add(step("parse_sheets", "解析表格",
+                "读表头、行数和样例值（" + totalColumns + " 列），表数据缓存在数据集目录里", 0));
+        plan.steps.add(step("detect_kind", "识别业务表", kindSummary(dataset), 0));
+
+        long distinctLabels = plan.aligns.stream().map(a -> a.label).distinct().count();
+        plan.steps.add(step("align_fields", "字段语义对齐",
+                "把 " + plan.aligns.size() + " 个列名对到 " + distinctLabels + " 个标准字段，"
+                        + crossSystemHint(dataset, plan.aligns), 0));
+
+        if (plan.joinKey != null) {
+            BridgeDataset.Table main = plan.sources.stream()
+                    .filter(s -> "主表".equals(s.role))
+                    .map(s -> byId(dataset, s.tableId))
+                    .filter(t -> t != null)
+                    .findFirst().orElse(null);
+            plan.steps.add(step("join_tables", "跨表关联",
+                    "以 " + (main == null ? "主表" : main.file) + " 为主表，按「" + plan.joinLabel
+                            + "」左连接其他表", 0));
+        }
+        if (hasRealFilters(plan)) {
+            plan.steps.add(step("filter_rows", "条件筛选", String.join("；", plan.filters), 0));
+        }
+        if (!plan.computes.isEmpty()) {
+            plan.steps.add(step("compute", "业务计算",
+                    "生成 " + plan.computes.size() + " 个计算列：" + String.join("、",
+                    plan.computes.stream().map(c -> c.name).toList()), 0));
+        }
+        plan.steps.add(step("isolate_anomaly", "异常隔离",
+                plan.anomalyChecks.size() + " 条检查规则，命中就进异常清单，不影响正常行", 0));
+        plan.steps.add(step("standardize_export", "标准化导出",
+                "按目标系统习惯输出 " + plan.outputColumns.size() + " 列标准表 + 异常清单（待用户确认后执行）", 0));
+        plan.steps.get(plan.steps.size() - 1).state = "pending";
+    }
+
+    /** 这次不跨表时，选哪一张：能覆盖计算列最多，其次行数最多 */
+    private BridgeDataset.Table soloTable(BridgeDataset dataset, BridgeDataset.Plan plan) {
+        Set<String> needed = new LinkedHashSet<>();
+        for (BridgeDataset.Compute compute : plan.computes) {
+            needed.addAll(compute.plus);
+            needed.addAll(compute.minus);
+        }
+        BridgeDataset.Table best = null;
+        int bestHit = -1;
+        for (BridgeDataset.Table table : dataset.tables) {
+            int hit = needed.isEmpty() ? 0 : (int) plan.aligns.stream()
+                    .filter(a -> a.tableId.equals(table.id) && needed.contains(a.label)).count();
+            if (hit > bestHit || (hit == bestHit && best != null && table.rows > best.rows)) {
+                best = table;
+                bestHit = hit;
+            }
+        }
+        return best;
+    }
+
+    private boolean hasRealFilters(BridgeDataset.Plan plan) {
+        return plan.filters.stream().anyMatch(text -> !text.contains("不加额外筛选"));
+    }
+
+    /**
+     * 异常检查只对“真的参与计算”的字段生效：
+     * 把没参与的表里没有的字段剔掉，并保证参与加减的数值列一定有非数字检查，
+     * 这一步是硬的，不靠模型记得写。
+     */
+    private void alignChecksToTables(BridgeDataset.Plan plan) {
+        Set<String> activeTables = new LinkedHashSet<>();
+        for (BridgeDataset.Source source : plan.sources) {
+            if (!"备选表".equals(source.role)) activeTables.add(source.tableId);
+        }
+        Set<String> activeLabels = new LinkedHashSet<>();
+        for (BridgeDataset.Align align : plan.aligns) {
+            if (activeTables.contains(align.tableId)) activeLabels.add(align.label);
+        }
+
+        List<String> dropped = new ArrayList<>();
+        plan.anomalyChecks.removeIf(check -> {
+            boolean missing = check.label != null && !check.label.isBlank() && !activeLabels.contains(check.label);
+            if (missing) dropped.add(check.label);
+            return missing;
+        });
+        // 不跨表时没有关联键，join 检查就是一条空跑项，界面上别挂着
+        if (plan.joinKey == null) plan.anomalyChecks.removeIf(check -> "join".equals(check.type));
+        for (String label : dropped) {
+            plan.notes.add("「" + label + "」这条异常检查这次用不上：参与计算的表里没有这一列");
+        }
+        if (plan.dateField != null && !activeLabels.contains(plan.dateField)) {
+            plan.dateField = null;
+            plan.dateFrom = null;
+            plan.dateTo = null;
+        }
+
+        // 参与加减的数值列必须有一条非数字检查，否则“面议”“--”会算成空值却当成正常行
+        Set<String> guarded = new LinkedHashSet<>();
+        for (BridgeDataset.AnomalyCheck check : plan.anomalyChecks) {
+            if ("numeric".equals(check.type)) guarded.add(check.label);
+        }
+        for (BridgeDataset.Compute compute : plan.computes) {
+            for (String label : compute.plus) addNumericCheck(plan, guarded, activeLabels, label);
+            for (String label : compute.minus) addNumericCheck(plan, guarded, activeLabels, label);
+        }
+
+        for (BridgeDataset.Step step : plan.steps) {
+            if (!"isolate_anomaly".equals(step.tool)) continue;
+            step.title = "异常隔离";
+            step.detail = plan.anomalyChecks.isEmpty() ? "这次没有需要单独隔离的检查项"
+                    : "跑 " + plan.anomalyChecks.size() + " 条检查："
+                    + String.join("、", plan.anomalyChecks.stream().map(c -> c.reason).distinct().toList());
+        }
+    }
+
+    private void addNumericCheck(BridgeDataset.Plan plan, Set<String> guarded, Set<String> activeLabels, String label) {
+        if (guarded.contains(label) || !activeLabels.contains(label)) return;
+        if (!STD_NUMERIC.contains(fieldOfLabel(label))) return;
+        plan.anomalyChecks.add(new BridgeDataset.AnomalyCheck("numeric", label, label + "出现非数字内容"));
+        guarded.add(label);
+    }
+
+    /** 模型给的步骤里如果没写最后一步导出，补上——导出必须由用户确认后才发生 */
+    private void ensureExportStep(BridgeDataset.Plan plan) {
+        boolean hasExport = plan.steps.stream().anyMatch(s -> "standardize_export".equals(s.tool));
+        if (!hasExport) {
+            plan.steps.add(step("standardize_export", "标准化导出",
+                    "按目标系统习惯输出 " + plan.outputColumns.size() + " 列标准表 + 异常清单（待用户确认后执行）", 0));
+        }
+        for (BridgeDataset.Step step : plan.steps) {
+            step.state = "standardize_export".equals(step.tool) ? "pending" : "done";
+        }
+    }
+
+    /**
+     * 步骤表要跟最终方案对得上：模型排了“筛选在职员工”，但这条筛选没被采纳时，
+     * 界面就不该还挂着这一步，否则用户以为执行时会筛，结果却没有。
+     */
+    private void pruneSteps(BridgeDataset.Plan plan) {
+        Set<String> unused = new LinkedHashSet<>();
+        if (plan.computes.isEmpty()) unused.add("compute");
+        if (!hasRealFilters(plan) && plan.statusFilter == null && plan.dateField == null) unused.add("filter_rows");
+        if (plan.joinKey == null) unused.add("join_tables");
+        plan.steps.removeIf(step -> unused.contains(step.tool));
     }
 
     private BridgeDataset.Step step(String tool, String title, String detail, long ms) {
@@ -660,19 +835,48 @@ public class BridgeAgentService {
         return filters;
     }
 
-    private List<String> buildAnomalyRules(String text, Set<String> labels) {
-        List<String> rules = new ArrayList<>(List.of(
-                "关联键为空或对不上主表的行",
-                "数值列出现非数字内容",
-                "关键字段疑似乱码"
-        ));
+    /**
+     * 异常检查清单：每条都能在执行阶段真正跑起来，不是只写在界面上给人看。
+     * 默认只放和数据完整性有关的检查，避免把无关的行都算成异常。
+     */
+    private List<BridgeDataset.AnomalyCheck> buildAnomalyChecks(BridgeDataset.Plan plan, Set<String> labels,
+                                                                String text) {
+        List<BridgeDataset.AnomalyCheck> checks = new ArrayList<>();
+        if (plan.joinKey != null) {
+            checks.add(new BridgeDataset.AnomalyCheck("join", "", "关联键为空，或在主数据表里对不上"));
+        }
         if (labels.contains("入职日期")) {
-            rules.add("入职日期为空或格式无法识别");
+            checks.add(new BridgeDataset.AnomalyCheck("date", "入职日期", "入职日期无法识别"));
+            if (text.contains("入职") || text.contains("缺失") || text.contains("花名册")) {
+                checks.add(new BridgeDataset.AnomalyCheck("blank", "入职日期", "入职信息缺失"));
+            }
         }
-        if (text.contains("缺失") || text.contains("异常")) {
-            rules.add("业务要求的关键信息缺失（按指令判定）");
+        for (String label : List.of("工号", "姓名")) {
+            if (labels.contains(label)) {
+                checks.add(new BridgeDataset.AnomalyCheck("garbled", label, label + "疑似乱码"));
+            }
         }
-        return rules;
+        // 参与计算的数值列一旦出现“面议”“--”，这一行的计算结果就不可信，单独隔离
+        Set<String> numericLabels = new LinkedHashSet<>();
+        for (BridgeDataset.Compute compute : plan.computes) {
+            for (String label : compute.plus) {
+                if (labels.contains(label) && STD_NUMERIC.contains(fieldOfLabel(label))) numericLabels.add(label);
+            }
+            for (String label : compute.minus) {
+                if (labels.contains(label) && STD_NUMERIC.contains(fieldOfLabel(label))) numericLabels.add(label);
+            }
+        }
+        for (String label : numericLabels) {
+            checks.add(new BridgeDataset.AnomalyCheck("numeric", label, label + "出现非数字内容"));
+        }
+        if (plan.joinKey != null && (text.contains("重复") || text.contains("查重"))) {
+            checks.add(new BridgeDataset.AnomalyCheck("duplicate", plan.joinLabel, "同一" + plan.joinLabel + "重复"));
+        }
+        return checks;
+    }
+
+    private String fieldOfLabel(String label) {
+        return STD.stream().filter(std -> std.label().equals(label)).map(Std::key).findFirst().orElse("");
     }
 
     private List<String> buildOutputColumns(BridgeDataset.Plan plan, Set<String> labels, String text) {
@@ -711,39 +915,93 @@ public class BridgeAgentService {
                 + plan.outputColumns.size() + " 列标准表；命中异常的行单独出清单。";
     }
 
-    /* ==================== 3. 模型复核（可选） ==================== */
+    /* ==================== 3. 规划器（大模型） ==================== */
 
-    private String refinePrompt(BridgeDataset dataset, String instruction, BridgeDataset.Plan plan) {
+    /**
+     * 规划提示：把可用的原子能力、数据集结构、已经对齐的标准字段都摊开，
+     * 让模型按业务目标重新排子任务并给出参数。输出只会在白名单范围内生效。
+     */
+    private String plannerPrompt(BridgeDataset dataset, String instruction, BridgeDataset.Plan plan,
+                                 Set<String> labels) {
         StringBuilder sb = new StringBuilder();
-        sb.append("你是跨系统表格桥接智能体的规划器。只输出 JSON，不要解释。\n");
-        sb.append("用户目标：").append(instruction.isEmpty() ? "（未填写）" : instruction).append("\n");
-        sb.append("数据集表格：\n");
+        sb.append("你是跨系统表格桥接智能体的规划器。只输出一个 JSON 对象，不要解释、不要代码块标记。\n\n");
+        sb.append("可用工具（steps[].tool 只能取这些名字）：\n");
+        for (Map.Entry<String, String> entry : TOOL_CATALOG.entrySet()) {
+            sb.append("- ").append(entry.getKey()).append("：").append(entry.getValue()).append("\n");
+        }
+        sb.append("\n用户业务目标：").append(instruction.isEmpty() ? "（未填写，按数据结构做标准整理）" : instruction)
+                .append("\n\n数据集里的表：\n");
         for (BridgeDataset.Table table : dataset.tables) {
             sb.append("- ").append(table.id).append(" ").append(table.file)
-                    .append(" 类型=").append(table.kindLabel)
-                    .append(" 行数=").append(table.rows)
-                    .append(" 列=").append(String.join("/", table.columns)).append("\n");
+                    .append("（").append(table.kindLabel).append("，").append(table.rows).append(" 行）")
+                    .append(" 列：").append(String.join("/", table.columns)).append("\n");
         }
-        sb.append("已对齐的标准字段：").append(String.join("、", plan.aligns.stream()
-                .map(a -> a.field + "←" + a.column).toList())).append("\n");
-        sb.append("输出 JSON 结构：{\"join_key\":\"emp_no 或 name 或空\",")
-                .append("\"compute\":[{\"name\":\"应发工资\",\"plus\":[\"基本工资\",\"绩效\"],\"minus\":[\"扣款\"]}],")
-                .append("\"filters\":[\"只保留在职员工\"],\"summary\":\"一句话说明方案\"}\n");
-        sb.append("要求：compute 里的列名必须来自上面的标准字段；不确定就不要编。");
+        sb.append("\n规则初稿：关联键=").append(plan.joinKey == null ? "无" : plan.joinLabel)
+                .append("；跨系统对齐=").append(String.join("，", plan.aligns.stream()
+                        .map(a -> a.column + "→" + a.label).distinct().limit(12).toList()))
+                .append("\n");
+        sb.append("\n可用的标准字段（计算、筛选、异常、输出列只能用这些中文名，且必须是数据集里已对齐的）：\n")
+                .append(String.join("、", labels)).append("\n");
+        sb.append("\n输出 JSON 结构：\n");
+        sb.append("{\"summary\":\"一句话方案\",")
+                .append("\"steps\":[{\"tool\":\"scan_dataset\",\"title\":\"扫描数据集\",\"detail\":\"这一步做了什么\"}],")
+                .append("\"join_key\":\"emp_no 或 name 或空\",")
+                .append("\"compute\":[{\"name\":\"应发工资\",\"plus\":[\"基本工资\",\"绩效\",\"补贴\"],\"minus\":[\"扣款\"]}],")
+                .append("\"filters\":[\"只保留在职员工\"],")
+                .append("\"date_field\":\"入职日期或空\",\"date_from\":\"2024-01-01 或空\",\"date_to\":\"2024-12-31 或空\",")
+                .append("\"status\":\"在职 或 离职 或 空\",")
+                .append("\"anomaly\":[{\"type\":\"blank\",\"field\":\"入职日期\",\"reason\":\"入职信息缺失\"}],")
+                .append("\"output_columns\":[\"工号\",\"姓名\",\"应发工资\"],")
+                .append("\"notes\":[\"需要提醒用户的话\"]}\n");
+        sb.append("\n要求：\n")
+                .append("1. steps 按真实执行顺序写，3 到 9 步，最后一步必须是 standardize_export，detail 写清这一步做什么。\n")
+                .append("2. 只排这个业务需要的步骤：只有一张表就不要 join_tables，没有要算的列就不要 compute。\n")
+                .append("3. compute 的 plus/minus、anomaly.field、output_columns 只能用上面列出的标准字段名；数据集里没有的不要编。\n")
+                .append("4. anomaly.type 只能是 join / blank / date / numeric / garbled / duplicate；join 不用填 field。\n")
+                .append("5. filters、status、date_from、date_to 只能来自用户在指令里明确说过的条件："
+                        + "用户没说“在职/离职”就不要填 status，没给日期区间就不要填 date_from/date_to。\n")
+                .append("6. 用户没提的计算不要加，拿不准就把对应字段留空，不要自己补充业务规则。\n");
         return sb.toString();
     }
 
-    private void applyModelPlan(BridgeDataset.Plan plan, String answer, Set<String> labels, String instruction) {
+    /** 把模型的计划落到方案上；返回 true 表示这次规划确实用上了模型 */
+    private boolean applyModelPlan(BridgeDataset.Plan plan, String answer, Set<String> labels,
+                                   BridgeDataset dataset) {
         JsonNode node = parseJson(answer);
         if (node == null) {
             plan.notes.add("大模型返回的内容不是 JSON，已忽略");
-            return;
+            return false;
         }
-        String joinKey = node.path("join_key").asText("");
-        if (joinKey.contains("emp") || joinKey.contains("工号")) plan.joinKey = "emp_no";
-        else if (joinKey.contains("name") || joinKey.contains("姓名")) plan.joinKey = "name";
-        if (plan.joinKey != null) plan.joinLabel = labelOfField(plan.joinKey);
+        boolean changed = false;
 
+        // 1. 子任务清单：只认白名单里的工具，不足 3 步就当模型没规划
+        List<BridgeDataset.Step> steps = new ArrayList<>();
+        for (JsonNode item : node.path("steps")) {
+            String tool = item.path("tool").asText("");
+            if (!TOOL_CATALOG.containsKey(tool)) continue;
+            BridgeDataset.Step step = new BridgeDataset.Step();
+            step.tool = tool;
+            step.title = blankTo(item.path("title").asText(""), TOOL_TITLES.get(tool));
+            step.detail = blankTo(item.path("detail").asText(""), TOOL_CATALOG.get(tool));
+            step.state = "standardize_export".equals(tool) ? "pending" : "done";
+            steps.add(step);
+        }
+        if (steps.size() >= 3) {
+            plan.steps = steps;
+            changed = true;
+        }
+
+        // 2. 关联键：必须真的在两张以上的表里都对齐了，否则不认
+        String joinText = node.path("join_key").asText("");
+        String candidate = joinText.contains("name") || joinText.contains("姓名") ? "name"
+                : joinText.contains("emp") || joinText.contains("工号") ? "emp_no" : null;
+        if (candidate != null && joinable(dataset, plan.aligns, candidate)) {
+            plan.joinKey = candidate;
+            plan.joinLabel = labelOfField(candidate);
+            changed = true;
+        }
+
+        // 3. 计算列
         List<BridgeDataset.Compute> computes = new ArrayList<>();
         for (JsonNode item : node.path("compute")) {
             BridgeDataset.Compute compute = new BridgeDataset.Compute();
@@ -753,20 +1011,156 @@ public class BridgeAgentService {
             compute.origin = "AI";
             if (!compute.name.isBlank() && !compute.plus.isEmpty()) computes.add(compute);
         }
-        if (!computes.isEmpty()) plan.computes = computes;
+        if (!computes.isEmpty()) {
+            plan.computes = computes;
+            changed = true;
+        }
 
-        List<String> extraFilters = new ArrayList<>();
+        // 4. 筛选条件
+        if (applyModelFilters(plan, node, labels, dataset.instruction)) changed = true;
+
+        // 5. 异常检查：只认白名单类型，字段必须是已对齐的标准字段
+        List<BridgeDataset.AnomalyCheck> checks = new ArrayList<>();
+        for (JsonNode item : node.path("anomaly")) {
+            String type = item.path("type").asText("");
+            if (!ANOMALY_TYPES.contains(type)) continue;
+            String field = item.path("field").asText("");
+            String label = labels.contains(field) ? field : ("join".equals(type) ? "" : plan.joinLabel);
+            String reason = blankTo(item.path("reason").asText(""), defaultReason(type, label));
+            checks.add(new BridgeDataset.AnomalyCheck(type, label, reason));
+        }
+        if (!checks.isEmpty()) {
+            // 有跨表关联就必须保留 join 检查，否则“对不上主表”的行会被当成正常数据
+            if (plan.joinKey != null && checks.stream().noneMatch(c -> "join".equals(c.type))) {
+                checks.add(0, new BridgeDataset.AnomalyCheck("join", "", "关联键为空，或在主数据表里对不上"));
+            }
+            plan.anomalyChecks = checks;
+            changed = true;
+        }
+
+        // 6. 输出列
+        Set<String> computeNames = new LinkedHashSet<>();
+        for (BridgeDataset.Compute compute : plan.computes) computeNames.add(compute.name);
+        List<String> columns = new ArrayList<>();
+        for (JsonNode item : node.path("output_columns")) {
+            String column = item.asText("");
+            boolean valid = labels.contains(column) || computeNames.contains(column) || "数据来源".equals(column);
+            if (valid && !columns.contains(column)) columns.add(column);
+        }
+        if (!columns.isEmpty()) {
+            plan.outputColumns = columns;
+            changed = true;
+        }
+
+        String summary = node.path("summary").asText("");
+        // 模型爱在概述里强调“剔除非在职人员”，但这条筛选没被采纳时，概述就成了假话
+        if (summary.length() > 4 && !mentionsUnaskedStatus(summary, dataset.instruction)) {
+            plan.summary = summary;
+            changed = true;
+        }
+        for (JsonNode item : node.path("notes")) {
+            String note = item.asText("");
+            if (note.isBlank() || mentionsUnaskedStatus(note, dataset.instruction)) continue;
+            plan.notes.add("大模型提示：" + note);
+        }
+        return changed;
+    }
+
+    /** 概述或提示里提到了在职/离职，而用户根本没提这个条件 */
+    private boolean mentionsUnaskedStatus(String text, String instruction) {
+        boolean asked = instruction.contains("在职") || instruction.contains("离职");
+        return !asked && (text.contains("在职") || text.contains("离职"));
+    }
+
+    /**
+     * 模型给的日期区间和在职状态要翻译成执行阶段真正能用的筛选。
+     * 用户没在指令里提的条件一律不接受——模型很容易顺手补一句“只保留在职”，
+     * 那会把本该输出的行悄悄筛掉；这里只把建议写进备注，让用户自己决定。
+     */
+    private boolean applyModelFilters(BridgeDataset.Plan plan, JsonNode node, Set<String> labels,
+                                      String instruction) {
+        boolean changed = false;
+        boolean askedStatus = instruction.contains("在职") || instruction.contains("离职");
+        boolean askedDate = instruction.matches("(?s).*\\d{4}.*") || instruction.contains("至今")
+                || instruction.contains("本月") || instruction.contains("上月") || instruction.contains("今年");
+        List<String> dropped = new ArrayList<>();
+
+        List<String> filters = new ArrayList<>();
         for (JsonNode item : node.path("filters")) {
-            String text = item.asText("");
-            if (!text.isBlank()) extraFilters.add(text);
+            String text = item.asText("").trim();
+            if (text.isEmpty() || filters.size() >= 6) continue;
+            if (!askedStatus && (text.contains("在职") || text.contains("离职"))) {
+                dropped.add(text);
+                continue;
+            }
+            if (!askedDate && (text.contains("日期") || text.contains("期间"))) {
+                dropped.add(text);
+                continue;
+            }
+            filters.add(text);
         }
-        for (String filter : extraFilters) {
-            if (!plan.filters.contains(filter)) plan.filters.add(filter);
+        if (!filters.isEmpty()) {
+            plan.filters = filters;
+            changed = true;
         }
-        if (node.path("summary").asText("").length() > 4) {
-            plan.summary = node.path("summary").asText();
+
+        LocalDate fromDate = TextUtils.parseDate(node.path("date_from").asText(""));
+        LocalDate toDate = TextUtils.parseDate(node.path("date_to").asText(""));
+        if (askedDate && (fromDate != null || toDate != null)) {
+            String field = node.path("date_field").asText("");
+            plan.dateField = labels.contains(field) ? field
+                    : List.of("入职日期", "开始日期", "加班日期").stream()
+                    .filter(labels::contains).findFirst().orElse(null);
+            if (plan.dateField != null) {
+                plan.dateFrom = fromDate == null ? null : TextUtils.formatDate(fromDate);
+                plan.dateTo = toDate == null ? null : TextUtils.formatDate(toDate);
+                boolean mentioned = plan.filters.stream()
+                        .anyMatch(f -> f.contains(plan.dateField) && f.contains("保留"));
+                if (!mentioned) {
+                    plan.filters.add("只保留" + plan.dateField + "在 "
+                            + (fromDate == null ? "最早" : plan.dateFrom) + " 到 "
+                            + (toDate == null ? "最新" : plan.dateTo) + " 之间的行");
+                }
+                changed = true;
+            }
         }
-        plan.outputColumns = buildOutputColumns(plan, labels, instruction);
+
+        String status = node.path("status").asText("");
+        if (askedStatus && (status.contains("在职") || status.contains("离职"))) {
+            plan.statusFilter = status.contains("离职") ? "离职" : "在职";
+            boolean mentioned = plan.filters.stream()
+                    .anyMatch(f -> f.contains(plan.statusFilter) && f.contains("保留"));
+            if (!mentioned) plan.filters.add("只保留" + plan.statusFilter + "状态的员工");
+            changed = true;
+        }
+        for (String text : dropped) {
+            plan.notes.add("大模型建议的筛选「" + text + "」指令里没提，这次没有执行");
+        }
+        return changed;
+    }
+
+    /** 关联键至少要出现在两张表里，才谈得上跨表关联 */
+    private boolean joinable(BridgeDataset dataset, List<BridgeDataset.Align> aligns, String field) {
+        long tables = dataset.tables.stream()
+                .filter(table -> aligns.stream().anyMatch(a -> a.tableId.equals(table.id) && a.field.equals(field)))
+                .count();
+        return tables >= 2;
+    }
+
+    private String defaultReason(String type, String label) {
+        return switch (type) {
+            case "join" -> "关联键为空，或在主数据表里对不上";
+            case "blank" -> label + "为空（按业务要求）";
+            case "date" -> label + "无法识别";
+            case "numeric" -> label + "出现非数字内容";
+            case "garbled" -> label + "疑似乱码";
+            case "duplicate" -> "同一" + label + "重复";
+            default -> "命中异常检查";
+        };
+    }
+
+    private String blankTo(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     private List<String> validLabels(JsonNode array, Set<String> labels) {
@@ -842,13 +1236,6 @@ public class BridgeAgentService {
 
         LocalDate fromDate = TextUtils.parseDate(plan.dateFrom);
         LocalDate toDate = TextUtils.parseDate(plan.dateTo);
-        // 日期区间和状态筛选要落在“原始记录”上：先筛再按工号聚合，
-        // 否则一个人多天记录合并成一行后，日期就只剩第一条，判断没有意义。
-        if (fromDate != null || plan.statusFilter != null) {
-            for (List<Map<String, String>> rows : stdRows.values()) {
-                rows.removeIf(row -> filteredOut(row, plan, fromDate, toDate, labelToField));
-            }
-        }
 
         BridgeDataset.Table primary = null;
         BridgeDataset.Source primarySource = plan.sources.stream()
@@ -861,6 +1248,24 @@ public class BridgeAgentService {
         }
         if (primary == null || !stdRows.containsKey(primary.id)) {
             throw new IllegalStateException("主表读不出来，请重新上传数据集");
+        }
+
+        // 日期区间和状态筛选要落在“原始记录”上：先筛再按工号聚合，
+        // 否则一个人多天记录合并成一行后，日期就只剩第一条，判断没有意义。
+        // 被筛选条件排除掉的人，后面挑“孤立行”时要跳过，不能反过来报成异常。
+        Set<String> filteredKeys = new LinkedHashSet<>();
+        if (fromDate != null || plan.statusFilter != null) {
+            for (Map.Entry<String, List<Map<String, String>>> entry : stdRows.entrySet()) {
+                List<Map<String, String>> rows = entry.getValue();
+                if (plan.joinKey != null && entry.getKey().equals(primary.id)) {
+                    for (Map<String, String> row : rows) {
+                        if (!filteredOut(row, plan, fromDate, toDate, labelToField)) continue;
+                        String key = TextUtils.norm(TextUtils.trim(row.get(plan.joinKey)));
+                        if (!key.isEmpty()) filteredKeys.add(key);
+                    }
+                }
+                rows.removeIf(row -> filteredOut(row, plan, fromDate, toDate, labelToField));
+            }
         }
 
         // 同类表只让字段最全的一张参与计算，其余标了“备选表”，这里直接略过
@@ -907,6 +1312,16 @@ public class BridgeAgentService {
             if (needed) requiredTables.put(tableId, table.file);
         }
 
+        // 规划阶段写下的异常检查到这里才真正跑；老数据集没有结构化检查时按默认规则补一份
+        Set<String> planLabels = new LinkedHashSet<>();
+        for (BridgeDataset.Align align : plan.aligns) planLabels.add(align.label);
+        List<BridgeDataset.AnomalyCheck> checks = plan.anomalyChecks == null || plan.anomalyChecks.isEmpty()
+                ? buildAnomalyChecks(plan, planLabels, dataset.instruction)
+                : plan.anomalyChecks;
+        boolean duplicateCheck = checks.stream().anyMatch(check -> "duplicate".equals(check.type));
+        Set<String> duplicateKeys = duplicateCheck && plan.joinKey != null
+                ? duplicateKeys(stdRows.get(primary.id), plan.joinKey) : Set.of();
+
         List<List<Object>> okCells = new ArrayList<>();
         List<List<Object>> anomalyCells = new ArrayList<>();
         List<Map<String, String>> preview = new ArrayList<>();
@@ -933,34 +1348,17 @@ public class BridgeAgentService {
                 }
             }
 
-            List<String> reasons = new ArrayList<>();
-            if (plan.joinKey != null) {
-                if (TextUtils.isBlank(key)) {
-                    reasons.add("缺少" + plan.joinLabel);
-                } else if (!missingTables.isEmpty()) {
-                    reasons.add("在 " + String.join("、", missingTables) + " 里对不上这个" + plan.joinLabel);
-                }
-            }
-            String onboard = valueOfLabel(merged, "入职日期", labelToField);
-            if (!TextUtils.isBlank(onboard) && TextUtils.parseDate(onboard) == null) {
-                reasons.add("入职日期无法识别");
-            }
-            if (TextUtils.isBlank(onboard) && (dataset.instruction.contains("入职") || dataset.instruction.contains("缺失"))) {
-                reasons.add("入职信息缺失");
-            }
             String empNo = valueOfLabel(merged, "工号", labelToField);
             String name = valueOfLabel(merged, "姓名", labelToField);
-            if (TextUtils.garbled(empNo) || TextUtils.garbled(name)) reasons.add("疑似乱码");
+            List<String> reasons = new ArrayList<>();
+            for (BridgeDataset.AnomalyCheck check : checks) {
+                String reason = reasonOf(check, merged, plan, missingTables, key, duplicateKeys, labelToField);
+                if (reason != null && !reasons.contains(reason)) reasons.add(reason);
+            }
 
             Map<String, String> computed = new LinkedHashMap<>();
             for (BridgeDataset.Compute compute : plan.computes) {
                 Double value = computeValue(merged, compute, labelToField);
-                if (value == null) {
-                    String sample = firstValue(merged, compute.plus, labelToField);
-                    if (!TextUtils.isBlank(sample) && TextUtils.parseNumber(sample) == null) {
-                        reasons.add(compute.name + " 的原始数值不是数字");
-                    }
-                }
                 computed.put(compute.name, value == null ? "" : TextUtils.numberText(value));
             }
 
@@ -1006,6 +1404,8 @@ public class BridgeAgentService {
                     if (anomalyCells.size() >= ANOMALY_LIMIT) break;
                     String rawKey = TextUtils.trim(row.get(plan.joinKey));
                     if (TextUtils.isBlank(rawKey) || primaryKeys.contains(TextUtils.norm(rawKey))) continue;
+                    // 这个人被日期/在职条件筛掉了，主表里没有他是正常的，别报成“对不上”
+                    if (filteredKeys.contains(TextUtils.norm(rawKey))) continue;
                     Map<String, String> anomaly = new LinkedHashMap<>();
                     anomaly.put("工号", valueOfLabel(row, "工号", labelToField));
                     anomaly.put("姓名", valueOfLabel(row, "姓名", labelToField));
@@ -1054,6 +1454,58 @@ public class BridgeAgentService {
         log.info("桥接数据集 {} 执行完成：{} 行，异常 {} 行，耗时 {}ms",
                 dataset.id, result.okRows, result.anomalyRows, result.elapsedMs);
         return dataset;
+    }
+
+    /** 跑一条异常检查：命中就返回写进异常清单的说明，没命中返回 null */
+    private String reasonOf(BridgeDataset.AnomalyCheck check, Map<String, String> merged, BridgeDataset.Plan plan,
+                            List<String> missingTables, String key, Set<String> duplicateKeys,
+                            Map<String, String> labelToField) {
+        String type = check.type == null ? "" : check.type;
+        switch (type) {
+            case "join": {
+                if (plan.joinKey == null) return null;
+                if (TextUtils.isBlank(key)) return "缺少" + plan.joinLabel;
+                if (!missingTables.isEmpty()) {
+                    return "在 " + String.join("、", missingTables) + " 里对不上这个" + plan.joinLabel;
+                }
+                return null;
+            }
+            case "blank": {
+                return TextUtils.isBlank(valueOfLabel(merged, check.label, labelToField)) ? check.reason : null;
+            }
+            case "date": {
+                String value = valueOfLabel(merged, check.label, labelToField);
+                return !TextUtils.isBlank(value) && TextUtils.parseDate(value) == null ? check.reason : null;
+            }
+            case "numeric": {
+                String value = valueOfLabel(merged, check.label, labelToField);
+                return !TextUtils.isBlank(value) && TextUtils.parseNumber(value) == null ? check.reason : null;
+            }
+            case "garbled": {
+                return TextUtils.garbled(valueOfLabel(merged, check.label, labelToField)) ? check.reason : null;
+            }
+            case "duplicate": {
+                boolean duplicated = plan.joinKey != null && !TextUtils.isBlank(key)
+                        && duplicateKeys.contains(TextUtils.norm(key));
+                return duplicated ? check.reason : null;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /** 主表里出现多次的工号：只在用户明确要求查重时才用来判异常 */
+    private Set<String> duplicateKeys(List<Map<String, String>> rows, String joinKey) {
+        Map<String, Integer> count = new LinkedHashMap<>();
+        for (Map<String, String> row : rows) {
+            String key = TextUtils.norm(TextUtils.trim(row.get(joinKey)));
+            if (!key.isEmpty()) count.merge(key, 1, Integer::sum);
+        }
+        Set<String> duplicated = new LinkedHashSet<>();
+        count.forEach((key, times) -> {
+            if (times > 1) duplicated.add(key);
+        });
+        return duplicated;
     }
 
     /** 目标系统大多只认 yyyy-MM-dd，导出前把各种日期写法统一掉 */

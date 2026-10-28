@@ -44,7 +44,10 @@ public class BridgeDataset {
         public List<Align> aligns = new ArrayList<>();
         public List<Compute> computes = new ArrayList<>();
         public List<String> filters = new ArrayList<>();
+        /** 展示用的异常规则文案，和 anomalyChecks 一一对应 */
         public List<String> anomalyRules = new ArrayList<>();
+        /** 执行时真正逐条跑的异常检查，规划器和模型都往这里写 */
+        public List<AnomalyCheck> anomalyChecks = new ArrayList<>();
         public List<String> outputColumns = new ArrayList<>();
         public String joinKey;
         public String joinLabel;
@@ -90,6 +93,26 @@ public class BridgeDataset {
         public List<String> plus = new ArrayList<>();
         public List<String> minus = new ArrayList<>();
         public String origin = "规则";
+    }
+
+    /**
+     * 一条能真正执行的异常检查：type 决定怎么判，label 指向标准字段，reason 是写进异常清单的说明。
+     * join 是跨表检查，label 为空；duplicate 按关联键判断。
+     */
+    public static class AnomalyCheck {
+        /** join / blank / date / numeric / garbled / duplicate */
+        public String type;
+        public String label = "";
+        public String reason;
+
+        public AnomalyCheck() {
+        }
+
+        public AnomalyCheck(String type, String label, String reason) {
+            this.type = type;
+            this.label = label == null ? "" : label;
+            this.reason = reason;
+        }
     }
 
     public static class Result {
