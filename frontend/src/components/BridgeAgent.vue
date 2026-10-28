@@ -42,6 +42,7 @@ const running = ref(false)
 
 const folderInput = ref(null)
 const instructionRef = ref(null)
+const uploadRef = ref(null)
 
 const rulesVisible = ref(false)
 const rules = ref([])
@@ -172,6 +173,7 @@ async function startScan() {
     const res = await api.bridgeCreate(pendingFiles.value, datasetName.value, pickSource.value)
     dataset.value = res
     pendingFiles.value = []
+    uploadRef.value?.clearFiles?.()
     resultTab.value = 'ok'
     okTable.value = { columns: [], rows: [], total: 0, page: 1, size: 20 }
     anomalyTable.value = { columns: [], rows: [], total: 0, page: 1, size: 20 }
@@ -478,6 +480,7 @@ async function loadRules() {
       <div class="bg-card-body">
         <div class="bg-drop-grid">
           <el-upload
+            ref="uploadRef"
             class="bg-drop"
             drag
             multiple

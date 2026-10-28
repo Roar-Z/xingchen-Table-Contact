@@ -1498,7 +1498,8 @@ watch(
 
 onMounted(() => {
   restoreSnapshot()
-  railVisible.value = true
+  // 智能体模式不需要“待交接/等待核对”这条状态轨，右侧留给区块本身
+  railVisible.value = workspaceMode.value !== 'agent'
   loadSchemes()
   loadAgentExperience()
 })

@@ -76,6 +76,12 @@ public class BridgeAgentService {
             "base_salary", "performance", "allowance", "deduction", "gross_salary", "net_salary",
             "overtime_hours", "days", "hours", "annual_left", "amount");
 
+    /** 主数据类型：一人一行，缺行代表信息缺失，需要进异常清单 */
+    private static final Set<String> MASTER_KINDS = Set.of("hr_employee", "erp_salary", "hr_annual");
+
+    /** 异常清单的行数上限：数据集再大也不至于写出一张几万行的清单 */
+    private static final int ANOMALY_LIMIT = 5000;
+
     private static final Map<String, String> KIND_LABELS = Map.of(
             "hr_employee", "HR 员工表",
             "erp_salary", "ERP 薪资表",
@@ -151,7 +157,7 @@ public class BridgeAgentService {
             String signature = signatureOf(sheet);
             if (seen.containsKey(signature)) {
                 dataset.notes.add(file.getFileName() + " 和 " + seen.get(signature)
-                        + " 数据完全相同，只保留前者，避免重复计算");
+                        + " 数据完全相同，只用 " + seen.get(signature) + "，跳过重复的那份");
                 continue;
             }
             seen.put(signature, file.getFileName().toString());
@@ -283,7 +289,7 @@ public class BridgeAgentService {
         plan.steps.add(step("isolate_anomaly", "异常隔离",
                 plan.anomalyRules.size() + " 条检查规则，命中就进异常清单，不影响正常行", 0));
 
-        plan.outputColumns = buildOutputColumns(plan, labels);
+        plan.outputColumns = buildOutputColumns(plan, labels, text);
         plan.steps.add(step("standardize_export", "标准化导出",
                 "按目标系统习惯输出 " + plan.outputColumns.size() + " 列标准表 + 异常清单（待用户确认后执行）", 0));
         plan.steps.get(plan.steps.size() - 1).state = "pending";
@@ -293,7 +299,7 @@ public class BridgeAgentService {
         if (model != null) {
             try {
                 String answer = model.chat(refinePrompt(dataset, text, plan));
-                applyModelPlan(plan, answer, labels);
+                applyModelPlan(plan, answer, labels, text);
                 plan.mode = "llm";
                 plan.steps.add(step("model_review", "大模型复核方案",
                         "结合自然语言目标检查关联键、计算列和筛选条件", 0));
@@ -669,7 +675,7 @@ public class BridgeAgentService {
         return rules;
     }
 
-    private List<String> buildOutputColumns(BridgeDataset.Plan plan, Set<String> labels) {
+    private List<String> buildOutputColumns(BridgeDataset.Plan plan, Set<String> labels, String text) {
         List<String> columns = new ArrayList<>();
         for (String label : List.of("工号", "姓名", "部门", "职位", "入职日期")) {
             if (labels.contains(label)) columns.add(label);
@@ -677,14 +683,26 @@ public class BridgeAgentService {
         for (BridgeDataset.Compute compute : plan.computes) {
             if (!columns.contains(compute.name)) columns.add(compute.name);
         }
-        // 计算列之外还带上归一化后的明细：请假类型、年假余额之类，已由计算列覆盖的不重复加
-        for (String label : List.of("请假类型", "加班小时", "请假小时", "天数", "年假余额", "在职状态")) {
+        // 明细列只在指令点到这一块时才带：问加班却带一堆请假列，反而给导入添麻烦
+        String lower = text.toLowerCase(Locale.ROOT);
+        boolean talkLeave = lower.contains("请假") || lower.contains("缺勤") || lower.contains("休假") || lower.contains("假");
+        boolean talkOvertime = lower.contains("加班");
+        boolean talkAnnual = lower.contains("年假") || lower.contains("调休");
+        boolean talkStatus = lower.contains("在职") || lower.contains("离职");
+        if (talkLeave) addIfAbsent(columns, labels, List.of("请假类型", "天数", "请假小时"));
+        if (talkOvertime) addIfAbsent(columns, labels, List.of("加班小时"));
+        if (talkAnnual) addIfAbsent(columns, labels, List.of("年假余额"));
+        if (talkStatus) addIfAbsent(columns, labels, List.of("在职状态"));
+        columns.add("数据来源");
+        return columns;
+    }
+
+    private void addIfAbsent(List<String> columns, Set<String> labels, List<String> wanted) {
+        for (String label : wanted) {
             if (!labels.contains(label)) continue;
             boolean covered = columns.stream().anyMatch(c -> c.contains(label) || label.contains(c));
             if (!covered) columns.add(label);
         }
-        columns.add("数据来源");
-        return columns;
     }
 
     private String autoSummary(BridgeDataset dataset, BridgeDataset.Plan plan) {
@@ -715,7 +733,7 @@ public class BridgeAgentService {
         return sb.toString();
     }
 
-    private void applyModelPlan(BridgeDataset.Plan plan, String answer, Set<String> labels) {
+    private void applyModelPlan(BridgeDataset.Plan plan, String answer, Set<String> labels, String instruction) {
         JsonNode node = parseJson(answer);
         if (node == null) {
             plan.notes.add("大模型返回的内容不是 JSON，已忽略");
@@ -748,7 +766,7 @@ public class BridgeAgentService {
         if (node.path("summary").asText("").length() > 4) {
             plan.summary = node.path("summary").asText();
         }
-        plan.outputColumns = buildOutputColumns(plan, labels);
+        plan.outputColumns = buildOutputColumns(plan, labels, instruction);
     }
 
     private List<String> validLabels(JsonNode array, Set<String> labels) {
@@ -865,7 +883,29 @@ public class BridgeAgentService {
             }
         }
 
-        boolean hasRelated = plan.sources.stream().anyMatch(s -> "关联表".equals(s.role));
+        // 只有真正被用到的关联表才要求能对上：这单只统计加班时，
+        // 没请过假的人不该被当成异常，否则异常清单会被无关的表撑满。
+        // 身份列（工号姓名部门）哪张表都有，不能算“用到了这张表”。
+        Set<String> usedLabels = new LinkedHashSet<>();
+        for (BridgeDataset.Compute compute : plan.computes) {
+            usedLabels.addAll(compute.plus);
+            usedLabels.addAll(compute.minus);
+        }
+        for (String column : plan.outputColumns) {
+            usedLabels.add(column);
+        }
+        usedLabels.removeAll(List.of("工号", "姓名", "部门", "职位", "入职日期", "在职状态", "数据来源"));
+        // 主数据表（员工/薪资/年假）一人一行，缺了就是信息缺失；
+        // 流水表（加班、请假）没记录等于这个人这月没加班/没请假，不该算异常。
+        Map<String, String> requiredTables = new LinkedHashMap<>();
+        for (String tableId : stdRows.keySet()) {
+            if (tableId.equals(primary.id)) continue;
+            BridgeDataset.Table table = byId(dataset, tableId);
+            if (table == null || !MASTER_KINDS.contains(table.kind)) continue;
+            boolean needed = plan.aligns.stream()
+                    .anyMatch(a -> a.tableId.equals(tableId) && usedLabels.contains(a.label));
+            if (needed) requiredTables.put(tableId, table.file);
+        }
 
         List<List<Object>> okCells = new ArrayList<>();
         List<List<Object>> anomalyCells = new ArrayList<>();
@@ -878,13 +918,15 @@ public class BridgeAgentService {
         for (GroupRow ref : groupRows(stdRows.get(primary.id), plan.joinKey)) {
             Map<String, String> merged = new LinkedHashMap<>(ref.values());
             String key = ref.key();
-            boolean anyMatched = false;
+            List<String> missingTables = new ArrayList<>();
             if (plan.joinKey != null && !TextUtils.isBlank(key)) {
                 for (String tableId : stdRows.keySet()) {
                     if (tableId.equals(primary.id)) continue;
                     Map<String, String> fact = factAgg.get(tableId + "|" + TextUtils.norm(key));
-                    if (fact == null) continue;
-                    anyMatched = true;
+                    if (fact == null) {
+                        if (requiredTables.containsKey(tableId)) missingTables.add(requiredTables.get(tableId));
+                        continue;
+                    }
                     for (Map.Entry<String, String> cell : fact.entrySet()) {
                         if (TextUtils.isBlank(merged.get(cell.getKey()))) merged.put(cell.getKey(), cell.getValue());
                     }
@@ -895,8 +937,8 @@ public class BridgeAgentService {
             if (plan.joinKey != null) {
                 if (TextUtils.isBlank(key)) {
                     reasons.add("缺少" + plan.joinLabel);
-                } else if (!anyMatched && hasRelated) {
-                    reasons.add("在关联表里对不上");
+                } else if (!missingTables.isEmpty()) {
+                    reasons.add("在 " + String.join("、", missingTables) + " 里对不上这个" + plan.joinLabel);
                 }
             }
             String onboard = valueOfLabel(merged, "入职日期", labelToField);
@@ -929,7 +971,7 @@ public class BridgeAgentService {
                 } else if (computed.containsKey(column)) {
                     out.put(column, computed.get(column));
                 } else {
-                    out.put(column, valueOfLabel(merged, column, labelToField));
+                    out.put(column, normalizeDate(valueOfLabel(merged, column, labelToField)));
                 }
             }
 
@@ -945,6 +987,34 @@ public class BridgeAgentService {
                 anomaly.put("原值摘要", summarize(merged, labelToField));
                 anomalyCells.add(cellsOf(anomaly.keySet(), anomaly));
                 if (anomalyPreview.size() < 20) anomalyPreview.add(anomaly);
+            }
+        }
+
+        // 关联表里有、主表里没有的工号：这才是真正“对不上”的行，单独挑出来
+        if (plan.joinKey != null) {
+            Set<String> primaryKeys = new LinkedHashSet<>();
+            for (Map<String, String> row : stdRows.get(primary.id)) {
+                String value = TextUtils.norm(TextUtils.trim(row.get(plan.joinKey)));
+                if (!value.isEmpty()) primaryKeys.add(value);
+            }
+            for (BridgeDataset.Table table : dataset.tables) {
+                if (table.id.equals(primary.id) || !stdRows.containsKey(table.id)) continue;
+                boolean skipped = plan.sources.stream()
+                        .anyMatch(s -> s.tableId.equals(table.id) && "备选表".equals(s.role));
+                if (skipped) continue;
+                for (Map<String, String> row : stdRows.get(table.id)) {
+                    if (anomalyCells.size() >= ANOMALY_LIMIT) break;
+                    String rawKey = TextUtils.trim(row.get(plan.joinKey));
+                    if (TextUtils.isBlank(rawKey) || primaryKeys.contains(TextUtils.norm(rawKey))) continue;
+                    Map<String, String> anomaly = new LinkedHashMap<>();
+                    anomaly.put("工号", valueOfLabel(row, "工号", labelToField));
+                    anomaly.put("姓名", valueOfLabel(row, "姓名", labelToField));
+                    anomaly.put("异常原因", "在 " + table.file + " 里，这个" + plan.joinLabel + "在主表中找不到");
+                    anomaly.put("来源表", table.file);
+                    anomaly.put("原值摘要", summarize(row, labelToField));
+                    anomalyCells.add(cellsOf(anomaly.keySet(), anomaly));
+                    if (anomalyPreview.size() < 20) anomalyPreview.add(anomaly);
+                }
             }
         }
 
@@ -984,6 +1054,13 @@ public class BridgeAgentService {
         log.info("桥接数据集 {} 执行完成：{} 行，异常 {} 行，耗时 {}ms",
                 dataset.id, result.okRows, result.anomalyRows, result.elapsedMs);
         return dataset;
+    }
+
+    /** 目标系统大多只认 yyyy-MM-dd，导出前把各种日期写法统一掉 */
+    private String normalizeDate(String value) {
+        if (TextUtils.isBlank(value)) return "";
+        java.time.LocalDate date = TextUtils.parseDate(value);
+        return date == null ? value : TextUtils.formatDate(date);
     }
 
     /** 在职状态和日期区间都在原始记录上判断，聚合后再判断就失真了 */
