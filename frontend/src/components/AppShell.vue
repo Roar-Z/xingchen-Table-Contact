@@ -177,6 +177,23 @@ onBeforeUnmount(() => {
           <span v-if="topbar.desc" class="topbar-desc">{{ topbar.desc }}</span>
         </div>
         <div class="topbar-side">
+          <!-- 页面级分段切换：新建任务页的 标准模式 / 智能体模式，放在仓库入口左边 -->
+          <div v-if="topbar.segments.length" class="topbar-seg" role="tablist">
+            <button
+              v-for="item in topbar.segments"
+              :key="item.key"
+              class="topbar-seg-btn"
+              :class="{ 'is-on': topbar.segment === item.key }"
+              type="button"
+              role="tab"
+              :aria-selected="topbar.segment === item.key"
+              :title="item.hint"
+              @click="topbar.onSegment && topbar.onSegment(item.key)"
+            >
+              {{ item.label }}
+              <b v-if="item.badge" class="topbar-seg-badge">{{ item.badge }}</b>
+            </button>
+          </div>
           <router-link
             to="/sheets/repo"
             class="topbar-repo"
@@ -397,6 +414,56 @@ onBeforeUnmount(() => {
   gap: 10px;
   align-items: center;
   flex-shrink: 0;
+}
+
+/* 顶栏右侧的模式切换：一行两段，选中的那段落白色底，和旁边的仓库按钮同一高度 */
+.topbar-seg {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.topbar-seg-btn {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  height: 26px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.topbar-seg-btn:hover {
+  color: var(--ink-2);
+}
+
+.topbar-seg-btn.is-on {
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.08);
+}
+
+/* “核心”标签：橙色胶囊，和页面里的智能体标记保持一致 */
+.topbar-seg-badge {
+  padding: 0 5px;
+  border: 1px solid #f0d9b5;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
 }
 
 /* 顶部右侧固定入口：表格文件都在仓库里，不用先回工作台 */

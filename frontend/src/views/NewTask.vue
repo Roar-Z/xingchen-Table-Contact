@@ -40,7 +40,7 @@ import {
   railVisible
 } from '../agentRail'
 import { useToast } from '../toast'
-import { clearTopbar, useTopbar } from '../topbar'
+import { clearTopbar, setTopbarSegment, useTopbar, useTopbarSegments } from '../topbar'
 
 // 组件名要和 App.vue 里 keep-alive 的 include 一致，否则切页面会重新挂载、任务全丢
 defineOptions({ name: 'AgentWorkbench' })
@@ -53,7 +53,6 @@ const TOPBAR = {
   title: '智能体工作台',
   desc: '把源表、目标模板和一句话目标交给智能体，它会自己读表、查记忆、规划映射，你只需要核对方案。'
 }
-useTopbar(TOPBAR)
 
 /*
  * 两种工作模式：
@@ -74,6 +73,28 @@ const TOPBAR_AGENT = {
   desc: '整个数据集（压缩包或文件夹）交上来，说一句业务目标，智能体自己找表、对齐字段、跨表计算，输出标准表和异常清单。'
 }
 
+// 模式切换放在顶栏右侧，页面顶部不再占一整条
+const MODE_SEGMENTS = [
+  {
+    key: 'standard',
+    label: '标准模式',
+    hint: '源表 + 目标模板，逐列核对，适合明确的转换任务'
+  },
+  {
+    key: 'agent',
+    label: '智能体模式',
+    badge: '核心',
+    hint: '上传压缩包或文件夹，说一句业务目标，自己找表、对齐字段、出标准表'
+  }
+]
+
+// 顶栏被 keep-alive 收回后要重新挂上模式切换，挂载、激活各调一次
+function mountTopbar() {
+  useTopbar(workspaceMode.value === 'agent' ? TOPBAR_AGENT : TOPBAR)
+  useTopbarSegments(MODE_SEGMENTS, switchMode)
+  setTopbarSegment(workspaceMode.value)
+}
+
 function switchMode(mode) {
   if (workspaceMode.value === mode) return
   workspaceMode.value = mode
@@ -82,9 +103,12 @@ function switchMode(mode) {
   } catch (e) {
     // 同上
   }
-  useTopbar(mode === 'agent' ? TOPBAR_AGENT : TOPBAR)
+  mountTopbar()
   railVisible.value = mode !== 'agent'
 }
+
+// 首次渲染就要把标题和模式切换挂上去，不能等 onMounted
+mountTopbar()
 
 /* ============ 区块 1：文件 ============ */
 const sourceFiles = ref([]) // 源数据表，允许多个
@@ -1498,6 +1522,7 @@ watch(
 
 onMounted(() => {
   restoreSnapshot()
+  mountTopbar()
   // 智能体模式不需要“待交接/等待核对”这条状态轨，右侧留给区块本身
   railVisible.value = workspaceMode.value !== 'agent'
   loadSchemes()
@@ -1508,7 +1533,7 @@ onMounted(() => {
 // 所以要在这里把顶栏和右侧状态轨交还出去，回来时再重新挂上，
 // 中间的轮询继续跑，任务跑完了切回来能直接看到结果。
 onActivated(() => {
-  useTopbar(workspaceMode.value === 'agent' ? TOPBAR_AGENT : TOPBAR)
+  mountTopbar()
   railVisible.value = workspaceMode.value !== 'agent'
 })
 
@@ -1735,25 +1760,23 @@ onBeforeUnmount(() => {
       后端没有连上，文件解析和任务执行都不可用。先在 backend 目录运行 start.cmd，再刷新页面。
     </div>
 
-    <!-- 模式切换：标准模式按模板逐列走，智能体模式整包交给它 -->
-    <div class="ad-modes">
+    <!-- 模式切换在顶栏右侧；窄屏顶栏是隐藏的，这里兜个底 -->
+    <div class="ad-mode-line">
       <button
-        class="ad-mode"
+        class="ad-mode-pill"
         :class="{ 'is-on': workspaceMode === 'standard' }"
         type="button"
         @click="switchMode('standard')"
       >
-        <span class="ad-mode-name">标准模式</span>
-        <em>源表 + 目标模板，逐列核对，适合明确的转换任务</em>
+        标准模式
       </button>
       <button
-        class="ad-mode is-agent"
+        class="ad-mode-pill"
         :class="{ 'is-on': workspaceMode === 'agent' }"
         type="button"
         @click="switchMode('agent')"
       >
-        <span class="ad-mode-name">智能体模式<b class="ad-core">核心</b></span>
-        <em>上传压缩包或文件夹，说一句业务目标，自己找表、对齐字段、出标准表</em>
+        智能体模式<b class="ad-core">核心</b>
       </button>
     </div>
 
@@ -3657,61 +3680,40 @@ onBeforeUnmount(() => {
   display: block;
 }
 
-/* ---------- 模式切换 ---------- */
-.ad-modes {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 14px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.ad-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: flex-start;
-  padding: 11px 14px;
-  border: 1px solid var(--ad-line);
-  border-radius: 10px;
-  background: #fff;
-  color: var(--ad-ink-3);
-  text-align: left;
-  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
-}
-
-.ad-mode:hover {
-  border-color: #cfd8e8;
-  background: #fbfcfe;
-}
-
-.ad-mode.is-on {
-  border-color: #c9d8f8;
-  background: linear-gradient(180deg, #f7faff 0%, #fff 100%);
-  box-shadow: inset 0 -2px 0 var(--ad-blue);
-}
-
-.ad-mode.is-agent .ad-mode-name {
-  color: var(--ad-blue);
-}
-
-.ad-mode-name {
-  display: inline-flex;
+/* ---------- 模式切换（窄屏兜底，宽屏在顶栏右侧） ---------- */
+.ad-mode-line {
+  display: none;
   gap: 6px;
   align-items: center;
-  color: var(--ad-ink-2);
-  font-size: 13px;
-  font-weight: 650;
+  margin-bottom: 12px;
 }
 
-.ad-mode.is-on .ad-mode-name {
-  color: var(--ad-ink);
-}
-
-.ad-mode em {
+.ad-mode-pill {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--ad-line);
+  border-radius: 999px;
+  background: #fff;
   color: var(--ad-ink-3);
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.5;
+  font-size: 12px;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.ad-mode-pill.is-on {
+  border-color: #c9d8f8;
+  background: var(--ad-blue-soft);
+  color: var(--ad-blue);
+  font-weight: 600;
+}
+
+/* 顶栏在 720px 以下整条隐藏，模式切换得在这里露出来 */
+@media (max-width: 720px) {
+  .ad-mode-line {
+    display: flex;
+  }
 }
 
 /* 智能体模式的“核心”标签：高亮，但只占一个小角，不抢标题 */
