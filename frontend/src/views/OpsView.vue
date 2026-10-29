@@ -124,7 +124,8 @@ function actionLabel(action) {
     'task.rerun': '重跑任务',
     'task.revise': '改结果',
     'task.undo-edit': '撤销修改',
-    'task.delete': '删除任务'
+    'task.delete': '删除任务',
+    'ops.runs.clear': '清理运行数据'
   }
   return map[action] || action || '—'
 }
@@ -210,13 +211,21 @@ async function load(silent = false) {
   }
 }
 
+// 清理完的刷新走静默模式：不整页闪骨架，直接换成新数据
+function onCleared() {
+  load(true)
+}
+
 onMounted(() => {
   load()
   timer = setInterval(() => load(true), 15000)
+  // 从侧边栏设置里清理完数据/日志时，就地刷新，不用手动按刷新
+  window.addEventListener('huibiao:ops-cleared', onCleared)
 })
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  window.removeEventListener('huibiao:ops-cleared', onCleared)
 })
 </script>
 

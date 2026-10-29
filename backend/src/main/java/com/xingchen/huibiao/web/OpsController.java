@@ -9,6 +9,8 @@ import com.xingchen.huibiao.util.TimeUtils;
 import dev.langchain4j.model.chat.ChatModel;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,6 +27,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ops")
 public class OpsController {
+
+    /** 清理类接口必须带上这两个字，前端弹窗也已经要求用户手输一遍。 */
+    private static final String CONFIRM_WORD = "清理";
 
     private final AgentRunStore runs;
     private final AgentToolCatalog tools;
@@ -65,6 +70,38 @@ public class OpsController {
     public Map<String, Object> audit(@RequestParam(value = "page", defaultValue = "1") int page,
                                      @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
         return audit.page(page, pageSize);
+    }
+
+    /**
+     * 清理运行观测里的运行记录（「清理数据」）：
+     * body 必须带上 {"confirm":"清理"}，前端已让用户手动输入过一遍，这里再兜一层，防误触和脚本直连。
+     */
+    @PostMapping("/runs/clear")
+    public Map<String, Object> clearRuns(@RequestBody(required = false) Map<String, Object> body) {
+        requireConfirm(body);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("cleared", runs.clear());
+        // 清理动作本身也留一条痕，方便事后追溯；这条会出现在刚清空的审计日志里
+        audit.record("ops.runs.clear", "运行记录", "清理运行观测的运行记录，统计与成功率一并归零");
+        return out;
+    }
+
+    /** 清理审计日志（「清理日志」）：日志本身就是被清对象，清完不再补记一条。 */
+    @PostMapping("/audit/clear")
+    public Map<String, Object> clearAudit(@RequestBody(required = false) Map<String, Object> body) {
+        requireConfirm(body);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("cleared", audit.clear());
+        return out;
+    }
+
+    private void requireConfirm(Map<String, Object> body) {
+        String confirm = body == null || body.get("confirm") == null
+                ? ""
+                : String.valueOf(body.get("confirm")).trim();
+        if (!CONFIRM_WORD.equals(confirm)) {
+            throw new IllegalArgumentException("确认文字不对，请输入「" + CONFIRM_WORD + "」两个字后再试");
+        }
     }
 
     /**

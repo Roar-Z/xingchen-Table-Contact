@@ -279,6 +279,31 @@ button:disabled {
   color: var(--accent);
 }
 
+/* 菜单分两段：系统与文档 / 清理，用一条细分隔线断开 */
+.foot-menu-sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line-soft);
+}
+
+/* 菜单项也有按钮形态（清理），去掉浏览器默认边框和底色，外观与链接项一致 */
+button.foot-menu-item {
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.foot-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.foot-menu-item.is-danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .foot-version {
   margin-top: 2px;
   color: #a9aeb6;

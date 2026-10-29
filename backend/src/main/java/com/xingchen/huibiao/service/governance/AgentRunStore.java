@@ -191,6 +191,17 @@ public class AgentRunStore {
         return out;
     }
 
+    /**
+     * 运行观测里的「清理数据」：运行记录清空后统计自然归零，
+     * 面板会回到“还没有运行记录”的初始状态。
+     */
+    public synchronized int clear() {
+        int count = runs.size();
+        runs.clear();
+        save();
+        return count;
+    }
+
     public synchronized List<Run> recent(int limit) {
         int size = Math.min(Math.max(limit, 1), runs.size());
         List<Run> tail = new ArrayList<>(runs.subList(runs.size() - size, runs.size()));

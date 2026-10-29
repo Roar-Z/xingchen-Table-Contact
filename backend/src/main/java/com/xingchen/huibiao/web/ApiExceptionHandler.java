@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -29,6 +31,22 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> conflict(IllegalStateException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("detail", message(e, "当前状态不允许继续操作")));
+    }
+
+    /**
+     * 请求体为空或 JSON 写错时，返回 400 而不是掉进兜底变成 500。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> unreadable(HttpMessageNotReadableException e) {
+        return ResponseEntity.badRequest().body(Map.of("detail", "请求内容不完整，请刷新页面后重试"));
+    }
+
+    /**
+     * 用表单或别的方式提交 JSON 接口时，同样给一句看得懂的提示，而不是 500。
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> unsupported(HttpMediaTypeNotSupportedException e) {
+        return ResponseEntity.badRequest().body(Map.of("detail", "请求内容格式不对，请刷新页面后重试"));
     }
 
     @ExceptionHandler(ResponseStatusException.class)

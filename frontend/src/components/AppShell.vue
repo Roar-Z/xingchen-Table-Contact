@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from './Icon.vue'
 import logoMark from '../assets/logo-mark.png'
 import { api, apiState } from '../api'
 import { clearNotice, noticeRetry, noticeText, retryNotice } from '../appNotice'
+import { useToast } from '../toast'
 import {
   railDetail,
   railMemory,
@@ -109,8 +110,75 @@ function closeSettings() {
   settingsOpen.value = false
 }
 
+/* ---------------- 设置菜单里的「清理数据 / 清理日志」 ----------------
+ * 清的是运行观测那一页的内容：清理数据 = 运行记录与统计，清理日志 = 审计日志。
+ * 都要求用户手动输入「清理」两个字才放行，往后再调一次接口也要带同样的确认文字。
+ */
+const CONFIRM_WORD = '清理'
+const { show } = useToast()
+
+const clean = reactive({
+  open: false,
+  kind: '',
+  input: '',
+  busy: false,
+  error: ''
+})
+
+const cleanMeta = computed(() =>
+  clean.kind === 'audit'
+    ? {
+        title: '清理运行日志',
+        desc: '会删除运行观测里的全部审计日志（最多 100 条）。任务、表格和运行统计不受影响，但操作留痕会丢失，删除后无法恢复。'
+      }
+    : {
+        title: '清理运行数据',
+        desc: '会清空运行观测里的全部运行记录，成功率、兜底率、Token 消耗等统计随之归零。任务和表格数据不受影响，但历史运行记录删除后无法恢复。'
+      }
+)
+
+function openClean(kind) {
+  closeSettings()
+  clean.open = true
+  clean.kind = kind
+  clean.input = ''
+  clean.busy = false
+  clean.error = ''
+}
+
+function closeClean() {
+  if (clean.busy) return
+  clean.open = false
+}
+
+async function submitClean() {
+  if (clean.busy) return
+  if (clean.input.trim() !== CONFIRM_WORD) {
+    clean.error = `请先输入「${CONFIRM_WORD}」两个字`
+    return
+  }
+  clean.busy = true
+  clean.error = ''
+  try {
+    const res = clean.kind === 'audit'
+      ? await api.clearAuditLogs(CONFIRM_WORD)
+      : await api.clearAgentRuns(CONFIRM_WORD)
+    const count = res?.cleared ?? 0
+    clean.open = false
+    show(clean.kind === 'audit' ? `已清理 ${count} 条运行日志` : `已清理 ${count} 条运行记录`)
+    // 正停在运行观测页时让它就地重新拉一遍，不用手动刷新
+    if (route.name === 'ops') window.dispatchEvent(new Event('huibiao:ops-cleared'))
+  } catch (err) {
+    clean.error = err.message || '清理失败，请稍后再试'
+  } finally {
+    clean.busy = false
+  }
+}
+
 function onKeydown(event) {
-  if (event.key === 'Escape') settingsOpen.value = false
+  if (event.key !== 'Escape') return
+  if (clean.open) closeClean()
+  else settingsOpen.value = false
 }
 
 onMounted(() => {
@@ -246,6 +314,15 @@ onBeforeUnmount(() => {
               >
                 <Icon name="code" :size="13" />开发文档
               </a>
+              <!-- 清理只针对运行观测那一页的数据，收在设置里，避免误点 -->
+              <div class="foot-menu-sep"></div>
+              <span class="foot-menu-head">清理</span>
+              <button type="button" class="foot-menu-item is-danger" @click="openClean('runs')">
+                <Icon name="database" :size="13" />清理数据
+              </button>
+              <button type="button" class="foot-menu-item is-danger" @click="openClean('audit')">
+                <Icon name="trash" :size="13" />清理日志
+              </button>
             </div>
           </div>
         </div>
@@ -302,6 +379,39 @@ onBeforeUnmount(() => {
       <main class="content">
         <slot />
       </main>
+    </div>
+
+    <!-- 清理确认弹窗：必须手输「清理」两个字才可点确认，和主流产品的危险操作一致 -->
+    <div v-if="clean.open" class="clean-mask" @click.self="closeClean">
+      <div class="clean-dialog" role="dialog" aria-modal="true" :aria-label="cleanMeta.title">
+        <div class="clean-head">
+          <span class="clean-icon"><Icon name="alert" :size="15" /></span>
+          <h3>{{ cleanMeta.title }}</h3>
+        </div>
+        <p class="clean-desc">{{ cleanMeta.desc }}</p>
+        <label class="clean-label" for="clean-confirm">请输入 <b>{{ CONFIRM_WORD }}</b> 两个字以确认</label>
+        <input
+          id="clean-confirm"
+          v-model="clean.input"
+          class="clean-input"
+          type="text"
+          autocomplete="off"
+          :placeholder="CONFIRM_WORD"
+          @keydown.enter="submitClean"
+        />
+        <p v-if="clean.error" class="clean-error">{{ clean.error }}</p>
+        <div class="clean-foot">
+          <button type="button" class="btn" :disabled="clean.busy" @click="closeClean">取消</button>
+          <button
+            type="button"
+            class="btn btn-danger-solid"
+            :disabled="clean.busy || clean.input.trim() !== CONFIRM_WORD"
+            @click="submitClean"
+          >
+            {{ clean.busy ? '清理中…' : '确认清理' }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -667,5 +777,96 @@ onBeforeUnmount(() => {
   .topbar-side {
     display: none;
   }
+}
+
+/* 清理确认弹窗：居中、白底、砖红主按钮，两行说明 + 一个必须手输的输入框 */
+.clean-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(24, 28, 34, 0.42);
+}
+
+.clean-dialog {
+  width: 100%;
+  max-width: 400px;
+  padding: 18px 20px 16px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(20, 24, 30, 0.24);
+}
+
+.clean-head {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.clean-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--danger-soft);
+  color: var(--danger);
+  flex-shrink: 0;
+}
+
+.clean-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.clean-desc {
+  margin: 10px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.clean-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.clean-label b {
+  color: var(--danger);
+}
+
+.clean-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.clean-input:focus {
+  border-color: var(--danger);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.clean-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+.clean-foot {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

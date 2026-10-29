@@ -148,6 +148,15 @@ export const api = {
     return request(`/api/ops/audit${query({ page, page_size: pageSize })}`)
   },
 
+  // 运行观测的清理：后端要求带上确认文字，避免误触或脚本直连
+  clearAgentRuns(confirm) {
+    return request('/api/ops/runs/clear', { method: 'POST', body: JSON.stringify({ confirm }) })
+  },
+
+  clearAuditLogs(confirm) {
+    return request('/api/ops/audit/clear', { method: 'POST', body: JSON.stringify({ confirm }) })
+  },
+
   prepareDemo(preset) {
     return request('/api/demo/prepare', { method: 'POST', body: JSON.stringify({ preset }) })
   },

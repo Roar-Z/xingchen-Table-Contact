@@ -108,6 +108,22 @@ public class AuditLog {
         return out;
     }
 
+    /**
+     * 运行观测里的「清理日志」：直接删掉审计日志文件，
+     * 下一次有新动作时按追加的方式重新创建。
+     */
+    public synchronized int clear() {
+        Path file = paths.auditLogFile();
+        int count = readAll().size();
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            log.warn("清理审计日志失败：{}", e.getMessage());
+            throw new IllegalStateException("审计日志正在被占用，请稍后再试");
+        }
+        return count;
+    }
+
     /** 从新到旧读出全部留存记录；单行损坏跳过，不影响整体查询。 */
     private List<Map<String, Object>> readAll() {
         Path file = paths.auditLogFile();
