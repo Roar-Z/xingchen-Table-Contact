@@ -22,11 +22,11 @@ import { topbar } from '../topbar'
 
 const route = useRoute()
 
+// 运行观测不占侧边栏的位置，收在左下角设置菜单的「系统与文档」里，避免导航越堆越长
 const navItems = [
   { to: '/', name: 'new-task', label: '新建任务', icon: 'plus' },
   { to: '/sheets', name: 'sheets', label: '表格智作', icon: 'table' },
-  { to: '/tasks', name: 'tasks', label: '任务记录', icon: 'history' },
-  { to: '/ops', name: 'ops', label: '运行观测', icon: 'shield' }
+  { to: '/tasks', name: 'tasks', label: '任务记录', icon: 'history' }
 ]
 
 const currentTitle = computed(() => {
