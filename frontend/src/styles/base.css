@@ -304,6 +304,18 @@ button.foot-menu-item {
   color: var(--danger);
 }
 
+/* 菜单里标出当前所在页面：点过之后一眼能看出已经进来了，不是“点了没反应” */
+.foot-menu-item.is-current {
+  background: #f4f6f9;
+  color: var(--accent);
+}
+
+.foot-menu-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .foot-version {
   margin-top: 2px;
   color: #a9aeb6;

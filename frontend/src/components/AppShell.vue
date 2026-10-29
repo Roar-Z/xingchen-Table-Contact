@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Icon from './Icon.vue'
 import logoMark from '../assets/logo-mark.png'
 import { api, apiState } from '../api'
@@ -21,6 +21,7 @@ import { project } from '../project'
 import { topbar } from '../topbar'
 
 const route = useRoute()
+const router = useRouter()
 
 // 运行观测不占侧边栏的位置，收在左下角设置菜单的「系统与文档」里，避免导航越堆越长
 const navItems = [
@@ -108,6 +109,22 @@ const settingsOpen = ref(false)
 
 function closeSettings() {
   settingsOpen.value = false
+}
+
+/**
+ * 设置菜单里的「运行观测」：先收起菜单，再显式跳转。
+ * 不能只靠 router-link 的默认行为——菜单是用 v-if 控制的，点击时菜单先被移除，
+ * 有时会把跳转吞掉；而且已经停在运行观测页时，同样的地址再点一次不会有任何反应，
+ * 看起来就像“点了没进入”。这里两种情况都兜住：没在页面上就 push，已经在页面上就就地刷新。
+ */
+function openOps() {
+  closeSettings()
+  if (route.name === 'ops') {
+    window.dispatchEvent(new Event('huibiao:ops-cleared'))
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    return
+  }
+  router.push('/ops')
 }
 
 /* ---------------- 设置菜单里的「清理数据 / 清理日志」 ----------------
@@ -297,9 +314,15 @@ onBeforeUnmount(() => {
             </button>
             <div v-if="settingsOpen" class="foot-menu" @click.stop>
               <span class="foot-menu-head">系统与文档</span>
-              <router-link class="foot-menu-item" to="/ops" @click="closeSettings">
+              <button
+                type="button"
+                class="foot-menu-item"
+                :class="{ 'is-current': route.name === 'ops' }"
+                @click="openOps"
+              >
                 <Icon name="shield" :size="13" />运行观测
-              </router-link>
+                <span v-if="route.name === 'ops'" class="foot-menu-hint">当前</span>
+              </button>
               <a
                 class="foot-menu-item"
                 href="/docs/product.html"
