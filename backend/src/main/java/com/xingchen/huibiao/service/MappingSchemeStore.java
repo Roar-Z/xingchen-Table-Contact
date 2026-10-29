@@ -3,6 +3,7 @@ package com.xingchen.huibiao.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.dto.ApiRequests.MappingSchemeEntry;
 import com.xingchen.huibiao.dto.ApiRequests.MappingSchemeRequest;
 import com.xingchen.huibiao.model.MappingScheme;
@@ -12,18 +13,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 映射方案仓库。和任务记录一样落在 data 目录，先用内存 + JSON 文件，不引入数据库。
- * 同名方案覆盖保存，最多保留 20 个，避免文件无限增长。
+ * 映射方案仓库：整体读写的小数据，落在 SQLite 的 kv 表（scope = mapping_schemes）。
+ * 不必为它单开一张表，但同样享受事务写入和「一个文件带走全部数据」的好处。
+ * 同名方案覆盖保存，最多保留 20 个，避免无限增长。
  */
 @Service
 public class MappingSchemeStore {
@@ -31,29 +31,57 @@ public class MappingSchemeStore {
     private static final Logger log = LoggerFactory.getLogger(MappingSchemeStore.class);
     private static final int MAX_SCHEMES = 20;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    /** kv 表里的分区名，和别的整体读写数据分开 */
+    private static final String SCOPE = "mapping_schemes";
 
     private final DataPaths paths;
+    private final SqliteDb db;
     private final ObjectMapper mapper;
     private final List<MappingScheme> schemes = new ArrayList<>();
 
-    public MappingSchemeStore(DataPaths paths, ObjectMapper mapper) {
+    public MappingSchemeStore(DataPaths paths, SqliteDb db, ObjectMapper mapper) {
         this.paths = paths;
+        this.db = db;
         this.mapper = mapper;
     }
 
     @PostConstruct
     public synchronized void load() {
+        migrateLegacy();
+        schemes.clear();
+        String body = db.kv(SCOPE);
+        if (body != null && !body.isBlank()) {
+            try {
+                List<MappingScheme> loaded = mapper.readValue(body, new TypeReference<List<MappingScheme>>() {
+                });
+                if (loaded != null) {
+                    schemes.addAll(loaded);
+                }
+            } catch (Exception e) {
+                log.warn("映射方案读取失败，先启动空仓库：{}", e.getMessage());
+            }
+        }
+        log.info("映射方案已加载 {} 个", schemes.size());
+    }
+
+    /** 老版本的 mapping-schemes.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    private void migrateLegacy() {
         Path file = paths.mappingSchemesFile();
-        if (!Files.exists(file)) {
+        if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
             return;
         }
         try {
-            List<MappingScheme> loaded = mapper.readValue(file.toFile(), new TypeReference<>() {
-            });
-            schemes.clear();
-            schemes.addAll(loaded);
-        } catch (IOException e) {
-            log.warn("映射方案读取失败，先启动空仓库：{}", e.getMessage());
+            List<MappingScheme> loaded = mapper.readValue(Files.readString(file),
+                    new TypeReference<List<MappingScheme>>() {
+                    });
+            if (loaded == null) {
+                loaded = new ArrayList<>();
+            }
+            db.kvPut(SCOPE, loaded);
+            log.info("已把 {} 个旧映射方案导入数据库", loaded.size());
+            db.retireLegacy(file);
+        } catch (Exception e) {
+            log.warn("旧映射方案导入失败，先按空仓库启动：{}", e.getMessage());
         }
     }
 
@@ -140,14 +168,8 @@ public class MappingSchemeStore {
         return false;
     }
 
+    /** 一次原子写入：写坏了不会留下半份方案列表。 */
     private void write() {
-        Path file = paths.mappingSchemesFile();
-        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
-        try {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), schemes);
-            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            throw new IllegalStateException("保存映射方案失败：" + e.getMessage(), e);
-        }
+        db.kvPut(SCOPE, schemes);
     }
 }

@@ -6,6 +6,9 @@ docs/tools/node_modules/
 
 # 运行数据（任务、表格、日志都是本机跑出来的，演示数据由 sample_data 提供）
 backend/data/
+# SQLite 的 WAL 副本，跟着 huibiao.db 生成，防止换位置后误提交
+*.db-wal
+*.db-shm
 
 # 本机密钥配置（放了大模型 api-key，不要提交）
 backend/config/application.yml

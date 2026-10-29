@@ -59,7 +59,7 @@ Xingchen Huibiao · Cross-system Spreadsheet Bridge Agent
 - **不同系统导出的同一批数据**（ERP 导出的加班表和导入 HR 的加班表长得一样）：表头、行数、首尾行完全一致时只留第一张，避免同一批记录算两遍；
 - **同类表有多张**（OA 导出的请假单和 HR 导入的请假模板）：每类只用字段最全的一张，另一张标成「备选表」，并在方案里写清楚。
 
-字段对齐结果可以直接在页面上改，改一次就存成自定义规则（`data/bridge/rules.json`），下次遇到同一个列名自动复用，新增报表也能接。数据集现场存在 `data/bridge/datasets/{id}/meta.json`，规划方案、执行轨迹、结果统计都在里面，换台机器拷整个 `data` 目录就能接着看。
+字段对齐结果可以直接在页面上改，改一次就存成自定义规则（`data/huibiao.db` 的 `kv` 表，scope 为 `bridge_rules`），下次遇到同一个列名自动复用，新增报表也能接。数据集现场存在 `data/huibiao.db` 的 `bridge_datasets` 表（规划方案、执行轨迹、结果统计都在里面），换台机器拷整个 `data` 目录就能接着看。
 
 切到智能体模式后，左侧导航栏的「操作步骤」卡片（模式标签为高亮的「智能体」，标准模式显示「半自动」）同步承接这一单的进度：上排是当前状态（待上传 / 待下达目标 / 规划中 / 待确认 / 执行中 / 已交付 / 需处理），下面一句话说明本次方案规模（对齐多少字段、算几列、输出几列），中间按规划器实际排出的顺序逐条列出原子能力——规划阶段真正跑过的扫描、解析、识别、对齐标为完成，跨表关联、计算、异常隔离与导出在执行前留白，下排是「N 步」和本单可用自定义规则的条数，点「管理」直接打开字段匹配规则。
 
@@ -102,7 +102,7 @@ GET    /api/bridge/standard-fields         标准字段清单
 | 能力 | 在本项目里的落地 |
 | --- | --- |
 | 工具调用 | `inspect_sources` 读表结构 → `detect_intent` 识别场景 → `recall_experience` 查历史 → `apply_experience` 复用映射 → `validate_mapping` 校验 → `auto_fix` 拼接补全 → `handoff_human` 交人确认 |
-| 记忆 | 有产出的任务配置写入 `agent-experience.json`，下次按“模板 + 场景 + 源表列重合度”检索并优先复用；页面可查看、可让智能体忘记 |
+| 记忆 | 有产出的任务配置写入 SQLite 的经验表（`kv` 表，scope 为 `experiences`），下次按“模板 + 场景 + 源表列重合度”检索并优先复用；页面可查看、可让智能体忘记 |
 | 规划与反思 | 每一步都产出“做了什么、依据是什么、结论是什么”的轨迹，而不是只给一个最终 JSON |
 | 执行期自愈 | 结果全为异常或 0 行时，按智能体推荐的映射重建配置重跑一次；成功后把修好的映射写回任务快照 |
 | 可观测 | 配置阶段轨迹、本轮 token 与模型调用次数在新建任务页展示；全局成功率、兜底率、工具频次、token 成本在「运行观测」页汇总 |
@@ -123,8 +123,8 @@ GET    /api/bridge/standard-fields         标准字段清单
 | 工具注册表 | 直接反射 `@Tool` 注解，确保“文档里写的工具”和“模型能调的工具”一致 |
 | 审计日志 | 生成方案、创建任务、确认执行、重跑、一句话改结果、撤销、删除，全部落盘 |
 
-- 运行记录写入 `data/agent-runs.json`，**本地最多保留 100 条**，超出丢最旧；「最近运行」按页查询（`/api/ops/runs?page=&page_size=`）；
-- 审计写入 `data/audit.log.jsonl`，只追加不改写，**同样最多保留 100 条**，启动与每次追加后都会收敛，按页查询（`/api/ops/audit?page=&page_size=`）；
+- 运行记录写入 SQLite 的 `agent_runs` 表，**本地最多保留 100 条**，超出按主键丢最旧；「最近运行」用 SQL 分页（`/api/ops/runs?page=&page_size=`）；
+- 审计写入 SQLite 的 `audit_logs` 表，只追加不改写，**同样最多保留 100 条**，启动与每次追加后都会收敛，按页查询（`/api/ops/audit?page=&page_size=`）；
 - 没有账号体系时，操作人取请求头 `X-Operator`，缺省记来源地址；以后接统一身份，只需让网关注入该头，日志格式不用改；
 - token 由 LangChain4j 的 `ChatModelListener` 在每次模型响应时累加，供应商未上报时记 0，不编造数字。
 
@@ -187,7 +187,7 @@ GET    /api/bridge/standard-fields         标准字段清单
 
 - 模型只负责「听懂」：拆出改哪列、怎么改、改哪些行；行号定位、条件匹配、数值运算由确定性代码执行，结果可预期；
 - 融合的两种形态：`join` 按关联键补列，`append` 按列并集纵向拼接，源表里的空行不参与融合；
-- 每张表在 `data/sheets/{id}.xlsx`，元数据在 `data/sheets.json`，撤销快照在 `data/sheet-backup/{id}.xlsx`；
+- 每张表在 `data/sheets/{id}.xlsx`，元数据在 `data/huibiao.db` 的 `sheets` 表，撤销快照在 `data/sheet-backup/{id}.xlsx`；
 - 空行在 Excel 里没有内容、读回来会被丢掉，所以行数单独记在索引里，撤销时按快照行数还原；
 - 没有配置模型或模型返回不合法时，退化为中文句式规则解析，改表、建表仍然可用。
 
@@ -224,7 +224,7 @@ DELETE /api/sheets/{id}                     删除表及其文件
 | 后端 | Spring Boot 3.4.5、Java 21、Maven |
 | 表格 | Apache POI 5.5.1（HSSF + XSSF） |
 | 语义 | LangChain4j 1.0.0（可选） |
-| 存储 | 本地 JSON，无数据库 |
+| 存储 | SQLite 单文件（`data/huibiao.db`，WAL 模式） |
 
 ## 快速启动
 
@@ -348,17 +348,17 @@ java -jar backend/target/huibiao-backend-1.0.0.jar
 
 | 路径 | 内容 |
 | --- | --- |
+| `backend/data/huibiao.db` | 本地数据库：任务、表格索引与日志、运行观测、审计、智能体经验、映射方案、设置、桥接数据集快照 |
 | `backend/data/uploads/` | 上传源文件副本 |
 | `backend/data/outputs/{任务编号}/` | HR 导入表、备份表、异常日志 |
-| `backend/data/tasks.json` | 任务记录 |
-| `backend/data/files.json` | 文件登记 |
-| `backend/data/settings.json` | 规则、模板、字段别名 |
-| `backend/data/agent-experience.json` | 智能体经验记忆（成功的场景 + 模板 + 映射） |
 | `backend/data/sheets/{id}.xlsx` | 表格智作里的每张表，一个文件一张 |
-| `backend/data/sheets.json` | 表格清单：名称、来源、列、行数、修改记录、日志 |
 | `backend/data/sheet-backup/{id}.xlsx` | 撤销用的上一版快照 |
+| `backend/data/bridge/datasets/{id}/` | 智能体模式上传的源表与产出（库表里只存现场快照） |
+| `backend/data/*.migrated` | 首次升级时老版本 JSON 的留档，确认无误后可删 |
 
-任务记录只增不删，避免误删已经交给 HR 的结果。备份时直接拷贝整个 `backend/data` 即可。
+数据库和表格文件都放在 `backend/data` 下，跟着 `app.data-dir` 配置走（默认 `./data`，相对后端启动目录）；`data/` 已在 `.gitignore` 里，不会进仓库。备份时直接拷贝整个 `backend/data` 即可。
+
+升级说明：第一次用新版本启动时，如果检测到旧的 `tasks.json`、`sheets.json`、`files.json`、`settings.json` 等文件，会自动一次性导入 `huibiao.db`，导入成功后把原文件改名为 `*.migrated` 留档，不会删数据。之后所有读写都只走数据库。
 
 ## 比赛文档
 
@@ -376,7 +376,7 @@ java -jar backend/target/huibiao-backend-1.0.0.jar
 
 - 只处理第一个工作表；
 - CSV 只支持逗号分隔；
-- 任务配置用 JSON 全量读写，任务很多时需要换数据库；
+- 存储是单机 SQLite（WAL），适合本机/单实例演示；多实例同时写同一个数据目录需要换成服务型数据库；
 - 没有登录和权限，默认只监听本机；
 - 年假余额不回写，只做单次结算；
 - 10 万行以上未做压力测试；

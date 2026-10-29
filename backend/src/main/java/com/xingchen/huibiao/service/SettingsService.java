@@ -2,6 +2,7 @@ package com.xingchen.huibiao.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.model.MappingField;
 import com.xingchen.huibiao.model.RuleItem;
 import com.xingchen.huibiao.model.TemplateItem;
@@ -11,10 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,23 +21,26 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 设置文件不大，直接用 JSON 落盘，省掉数据库依赖。
- * 结构：aliases 存用户补充的表头别名，rules 存计算口径，templates 存自定义输出模板。
+ * 设置：别名、计算口径、自定义模板，整体读写，落 SQLite 的 kv 表（scope = settings）。
+ * 数据量很小，不值得单开表；放进 kv 后同样「一个 db 文件带走全部数据」，写入也是原子的。
  */
 @Service
 public class SettingsService {
 
     private static final Logger log = LoggerFactory.getLogger(SettingsService.class);
+    private static final String SCOPE = "settings";
 
     private final DataPaths paths;
+    private final SqliteDb db;
     private final ObjectMapper mapper;
     private final HeaderCatalog catalog;
     private SettingsData data = new SettingsData();
     private final List<RuleItem> defaults = new ArrayList<>();
     private final List<TemplateItem> builtInTemplates = new ArrayList<>();
 
-    public SettingsService(DataPaths paths, ObjectMapper mapper, HeaderCatalog catalog) {
+    public SettingsService(DataPaths paths, SqliteDb db, ObjectMapper mapper, HeaderCatalog catalog) {
         this.paths = paths;
+        this.db = db;
         this.mapper = mapper;
         this.catalog = catalog;
         initDefaults();
@@ -75,33 +77,50 @@ public class SettingsService {
 
     @PostConstruct
     public void load() {
+        migrateLegacy();
+        String body = db.kv(SCOPE);
+        if (body == null || body.isBlank()) {
+            return;
+        }
+        SettingsData loaded = db.fromJson(body, SettingsData.class);
+        if (loaded == null) {
+            log.warn("设置读取失败，先用默认值");
+            return;
+        }
+        if (loaded.aliases != null) {
+            data.aliases = loaded.aliases;
+        }
+        if (loaded.rules != null) {
+            data.rules = loaded.rules;
+        }
+        if (loaded.templates != null) {
+            data.templates = loaded.templates;
+        }
+    }
+
+    /** 老版本的 settings.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    private void migrateLegacy() {
         Path file = paths.settingsFile();
-        if (!Files.exists(file)) {
+        if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
             return;
         }
         try {
             SettingsData loaded = mapper.readValue(file.toFile(), SettingsData.class);
-            if (loaded.aliases != null) {
-                data.aliases = loaded.aliases;
+            if (loaded == null) {
+                loaded = new SettingsData();
             }
-            if (loaded.rules != null) {
-                data.rules = loaded.rules;
-            }
-            if (loaded.templates != null) {
-                data.templates = loaded.templates;
-            }
-        } catch (IOException e) {
-            log.warn("设置文件读不出来，先用默认值：{}", e.getMessage());
+            db.kvPut(SCOPE, loaded);
+            log.info("已把旧设置导入数据库");
+            db.retireLegacy(file);
+        } catch (Exception e) {
+            log.warn("旧设置导入失败，先用默认值：{}", e.getMessage());
         }
     }
 
     public synchronized void save() {
-        Path file = paths.settingsFile();
-        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
         try {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), data);
-            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
+            db.kvPut(SCOPE, data);
+        } catch (RuntimeException e) {
             throw new IllegalStateException("保存设置失败：" + e.getMessage(), e);
         }
     }

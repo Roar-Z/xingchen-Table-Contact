@@ -314,7 +314,7 @@ public class TaskService {
             if (!Files.isRegularFile(paths.uploadPath(meta.storedName))) {
                 throw new IllegalArgumentException("源文件已经不在 uploads 目录：" + source.name);
             }
-            // 不覆盖 role，交给 files.json 里的原始角色决定
+            // 不覆盖 role，交给文件登记里的原始角色决定
             refs.add(new FileRef(source.fileId, null));
         }
         if (refs.isEmpty()) {

@@ -1193,7 +1193,7 @@ async function loadRules() {
     <!-- ==================== 自定义匹配规则 ==================== -->
     <el-dialog v-model="rulesVisible" title="自定义字段匹配规则" width="620px" class="bg-dialog">
       <p class="bg-dialog-desc">
-        规则保存在服务器（data/bridge/rules.json），跨数据集复用。新增报表里出现同样的列名时会直接对齐，不用每次重新判断。
+        规则保存在服务器数据库（data/huibiao.db），跨数据集复用。新增报表里出现同样的列名时会直接对齐，不用每次重新判断。
       </p>
       <div class="bg-rule-add">
         <el-select v-model="ruleDraft.standard" size="small" filterable class="bg-w-sm">

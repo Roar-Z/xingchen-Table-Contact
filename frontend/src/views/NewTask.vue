@@ -2274,7 +2274,7 @@ onBeforeUnmount(() => {
               />
             </el-select>
             <el-button v-if="activeScheme" size="small" @click="removeScheme">删除方案</el-button>
-            <span class="nt-scheme-tip">方案保存在服务器（data/mapping-schemes.json），换浏览器或换同事也能加载。</span>
+            <span class="nt-scheme-tip">方案保存在服务器数据库（data/huibiao.db），换浏览器或换同事也能加载。</span>
           </div>
         </template>
       </div>

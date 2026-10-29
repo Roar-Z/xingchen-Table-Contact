@@ -54,42 +54,46 @@ public class DataPaths {
         return outputs;
     }
 
+    /**
+     * 本地唯一的数据文件：data/huibiao.db。
+     * 和 uploads / sheets / outputs 放在同一个 data 目录下，整个目录拷走就等于备份。
+     * 真正的 .db 旁边会自动生成 -wal、-shm 两个临时文件，属正常现象。
+     */
+    public Path dbFile() {
+        return root.resolve("huibiao.db");
+    }
+
+    /** 老版本的任务文件，只在首次启动做一次性导入时用。 */
     public Path tasksFile() {
         return root.resolve("tasks.json");
     }
 
-    /**
-     * 映射方案独立存一个文件，和任务记录分开，方便直接拷贝给同事复用。
-     */
+    /** 老版本的映射方案文件，只在首次启动做一次性导入时用；现在存 huibiao.db 的 kv 表。 */
     public Path mappingSchemesFile() {
         return root.resolve("mapping-schemes.json");
     }
 
-    /**
-     * 智能体的经验记忆：成功的场景 + 模板 + 映射组合，下次同类表优先复用。
-     */
+    /** 老版本的经验记忆文件，只在首次启动做一次性导入时用；现在存 huibiao.db 的 kv 表。 */
     public Path agentExperienceFile() {
         return root.resolve("agent-experience.json");
     }
 
+    /** 老版本的文件索引，只在首次启动做一次性导入时用；现在存 huibiao.db 的 kv 表。 */
     public Path filesFile() {
         return root.resolve("files.json");
     }
 
+    /** 老版本的设置文件，只在首次启动做一次性导入时用；现在存 huibiao.db 的 kv 表。 */
     public Path settingsFile() {
         return root.resolve("settings.json");
     }
 
-    /**
-     * 智能体运行观测：每次配置编排的耗时、token、工具调用、兜底情况，供运行面板统计。
-     */
+    /** 老版本的运行观测文件，只在首次启动做一次性导入时用；现在存 agent_runs 表。 */
     public Path agentRunsFile() {
         return root.resolve("agent-runs.json");
     }
 
-    /**
-     * 审计日志：方案生成、任务创建/确认/改结果/删除等关键动作，一行一条，只追加不改写。
-     */
+    /** 老版本的审计日志，只在首次启动做一次性导入时用；现在存 audit_logs 表。 */
     public Path auditLogFile() {
         return root.resolve("audit.log.jsonl");
     }
@@ -103,18 +107,19 @@ public class DataPaths {
     }
 
     /**
-     * 表格智作的仓库：每张表一个 xlsx，元数据和操作日志放在 sheets.json。
+     * 表格智作的仓库：每张表一个 xlsx；清单、列定义和日志都存 huibiao.db 的 sheets / sheet_logs 表。
      */
     public Path sheets() {
         return sheets;
     }
 
+    /** 老版本的表格清单，只在首次启动做一次性导入时用；现在存 sheets 表。 */
     public Path sheetsFile() {
         return root.resolve("sheets.json");
     }
 
     /**
-     * 已删除表格留下的一条「删除表格」日志。表本身没了，但操作日志里要留痕。
+     * 老版本的已删除表格日志，只在首次启动做一次性导入时用；现在以 deleted=1 记在 sheet_logs 表里。
      */
     public Path sheetLogsFile() {
         return root.resolve("sheet-logs.json");

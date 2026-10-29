@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * 智能体模式（跨系统桥接）的现场：一次上传的整个数据集、规划方案、执行结果都在这里。
- * 结构直接写进 data/bridge/datasets/&lt;id&gt;/meta.json，刷新页面能接着看。
+ * 结构整体存进 SQLite 的 bridge_datasets 表，刷新页面能接着看。
  */
 public class BridgeDataset {
 

@@ -46,7 +46,7 @@ public class SceneRouter {
         if (plan.targetTemplate == null) {
             TemplateItem template = settings.builtIn("leave".equals(plan.scene) ? "tpl_absence" : "tpl_overtime");
             if (template == null) {
-                throw new IllegalStateException("内置输出模板丢失，请检查 data/settings.json");
+                throw new IllegalStateException("内置输出模板丢失，请检查数据库里的设置（data/huibiao.db）");
             }
             plan.targetTemplate = template;
         }

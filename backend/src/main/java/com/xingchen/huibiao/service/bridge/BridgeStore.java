@@ -3,8 +3,12 @@ package com.xingchen.huibiao.service.bridge;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.model.BridgeDataset;
 import com.xingchen.huibiao.util.TextUtils;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -16,7 +20,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -32,25 +35,103 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * 智能体模式的数据集仓库：把上传的 zip / 文件夹摊到磁盘上，元数据和自定义规则各存一个 JSON。
- * 和 files.json 分开，标准模式的源表不会受影响。
+ * 智能体模式的数据集仓库：表本体（xlsx/csv）摊在 data/bridge/datasets/&lt;id&gt;/files 下，
+ * 现场快照（扫描结果、规划方案、执行结果）存 SQLite 的 bridge_datasets 表，自定义匹配规则存 kv。
+ *
+ * 这样列表页不再遍历目录读 meta.json，按时间倒序取最近 100 条就是一条 SQL；
+ * 删除数据集时文件目录和数据库记录一起清掉，不会留下读不到的空壳记录。
+ * 和 files 索引分开，标准模式的源表不会受到影响。
  */
 @Service
 public class BridgeStore {
 
+    private static final Logger log = LoggerFactory.getLogger(BridgeStore.class);
     private static final Set<String> TABLE_EXT = Set.of(".xlsx", ".xls", ".csv");
     private static final int MAX_FILES = 300;
     /** 最近记录最多返回 100 条，与页面上的清理入口配合 */
     private static final int MAX_RECENT = 100;
     private static final long MAX_ENTRY_BYTES = 40L * 1024 * 1024;
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    /** 自定义匹配规则是整体读写的小数据，放 kv 表 */
+    private static final String RULES_SCOPE = "bridge_rules";
 
     private final DataPaths paths;
+    private final SqliteDb db;
     private final ObjectMapper mapper;
 
-    public BridgeStore(DataPaths paths, ObjectMapper mapper) {
+    public BridgeStore(DataPaths paths, SqliteDb db, ObjectMapper mapper) {
         this.paths = paths;
+        this.db = db;
         this.mapper = mapper;
+    }
+
+    /**
+     * 老版本把每个数据集的现场写成 datasets/&lt;id&gt;/meta.json、规则写成 bridge/rules.json。
+     * 只在库里还没有这份数据时导入一次，导完把原文件改名留档。
+     */
+    @PostConstruct
+    public void init() {
+        migrateLegacyDatasets();
+        migrateLegacyRules();
+    }
+
+    private void migrateLegacyDatasets() {
+        if (!db.isEmpty("bridge_datasets")) {
+            return;
+        }
+        Path base = root().resolve("datasets");
+        if (!Files.isDirectory(base)) {
+            return;
+        }
+        List<BridgeDataset> loaded = new ArrayList<>();
+        List<Path> legacyFiles = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(base)) {
+            for (Path child : stream) {
+                Path meta = child.resolve("meta.json");
+                if (!Files.isDirectory(child) || !Files.isRegularFile(meta)) {
+                    continue;
+                }
+                try {
+                    BridgeDataset dataset = mapper.readValue(meta.toFile(), BridgeDataset.class);
+                    if (dataset != null && !TextUtils.norm(dataset.id).isEmpty()) {
+                        loaded.add(dataset);
+                        legacyFiles.add(meta);
+                    }
+                } catch (IOException ignored) {
+                    // 半途写坏的历史文件跳过，不影响其他数据集
+                }
+            }
+        } catch (IOException e) {
+            log.warn("读取旧数据集目录失败：{}", e.getMessage());
+            return;
+        }
+        if (loaded.isEmpty()) {
+            return;
+        }
+        db.tx(connection -> {
+            for (BridgeDataset dataset : loaded) {
+                upsert(connection, dataset);
+            }
+            return null;
+        });
+        legacyFiles.forEach(db::retireLegacy);
+        log.info("已把 {} 个旧数据集现场导入数据库", loaded.size());
+    }
+
+    private void migrateLegacyRules() {
+        Path file = rulesFile();
+        if (db.kv(RULES_SCOPE) != null || !Files.isRegularFile(file)) {
+            return;
+        }
+        try {
+            List<Map<String, String>> rules = mapper.readValue(file.toFile(), new TypeReference<>() {
+            });
+            db.kvPut(RULES_SCOPE, rules == null ? new ArrayList<>() : rules);
+            db.retireLegacy(file);
+            log.info("已把旧自定义匹配规则导入数据库");
+        } catch (Exception e) {
+            log.warn("旧自定义规则导入失败，先按空规则启动：{}", e.getMessage());
+        }
     }
 
     public Path root() {
@@ -69,10 +150,6 @@ public class BridgeStore {
         return datasetDir(id).resolve("out");
     }
 
-    private Path metaFile(String id) {
-        return datasetDir(id).resolve("meta.json");
-    }
-
     /** 自定义字段匹配规则：标准字段 ← 各系统里的叫法，跨数据集复用 */
     private Path rulesFile() {
         return root().resolve("rules.json");
@@ -89,53 +166,57 @@ public class BridgeStore {
     public void save(BridgeDataset dataset) {
         try {
             Files.createDirectories(datasetDir(dataset.id));
-            Path temp = metaFile(dataset.id).resolveSibling("meta.json.tmp");
-            mapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), dataset);
-            Files.move(temp, metaFile(dataset.id), StandardCopyOption.REPLACE_EXISTING);
+            Files.createDirectories(outDir(dataset.id));
         } catch (IOException e) {
-            throw new IllegalStateException("保存数据集失败：" + e.getMessage(), e);
+            throw new IllegalStateException("创建数据集目录失败：" + e.getMessage(), e);
+        }
+        db.tx(connection -> {
+            upsert(connection, dataset);
+            return null;
+        });
+    }
+
+    private void upsert(java.sql.Connection connection, BridgeDataset dataset) throws java.sql.SQLException {
+        try (java.sql.PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO bridge_datasets (id, name, source_type, created_at, status, instruction, body) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                        + "ON CONFLICT(id) DO UPDATE SET name = excluded.name, source_type = excluded.source_type, "
+                        + "created_at = excluded.created_at, status = excluded.status, "
+                        + "instruction = excluded.instruction, body = excluded.body")) {
+            ps.setString(1, dataset.id);
+            ps.setString(2, dataset.name == null ? "" : dataset.name);
+            ps.setString(3, dataset.sourceType == null ? "files" : dataset.sourceType);
+            ps.setString(4, dataset.createdAt == null ? "" : dataset.createdAt);
+            ps.setString(5, dataset.status == null ? "" : dataset.status);
+            ps.setString(6, dataset.instruction == null ? "" : dataset.instruction);
+            ps.setString(7, db.toJson(dataset));
+            ps.executeUpdate();
         }
     }
 
     public BridgeDataset load(String id) {
-        Path meta = metaFile(id);
-        if (!Files.exists(meta)) {
+        String body = db.one("SELECT body FROM bridge_datasets WHERE id = ?", rs -> rs.getString(1), id);
+        if (body == null) {
             throw new IllegalArgumentException("数据集不存在，可能已被清理，请重新上传");
         }
-        try {
-            return mapper.readValue(meta.toFile(), BridgeDataset.class);
-        } catch (IOException e) {
-            throw new IllegalStateException("读取数据集失败：" + e.getMessage(), e);
+        BridgeDataset dataset = db.fromJson(body, BridgeDataset.class);
+        if (dataset == null) {
+            throw new IllegalStateException("读取数据集失败：快照内容损坏");
         }
+        return dataset;
     }
 
     /** 最近上传的数据集，给页面做“继续上一单” */
     public List<BridgeDataset> recent() {
-        List<BridgeDataset> list = new ArrayList<>();
-        Path dir = root().resolve("datasets");
-        if (!Files.exists(dir)) {
-            return list;
-        }
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
-            for (Path child : stream) {
-                Path meta = child.resolve("meta.json");
-                if (!Files.isDirectory(child) || !Files.exists(meta)) continue;
-                try {
-                    list.add(mapper.readValue(meta.toFile(), BridgeDataset.class));
-                } catch (IOException ignored) {
-                    // 半途写坏的文件直接跳过，不影响其他数据集
-                }
-            }
-        } catch (IOException e) {
-            return list;
-        }
-        list.sort(Comparator.comparing((BridgeDataset ds) -> ds.createdAt == null ? "" : ds.createdAt).reversed());
-        // 最近记录列表最多返回 100 条，配合前端的滚动与清理入口
-        return list.size() > MAX_RECENT ? list.subList(0, MAX_RECENT) : list;
+        List<BridgeDataset> list = db.list(
+                "SELECT body FROM bridge_datasets ORDER BY created_at DESC LIMIT ?",
+                rs -> db.fromJson(rs.getString(1), BridgeDataset.class), MAX_RECENT);
+        list.removeIf(java.util.Objects::isNull);
+        return list;
     }
 
     /**
-     * 删除一个数据集：整目录连同源表、方案与产出一起清掉。
+     * 删除一个数据集：整目录连同源表、方案与产出一起清掉，数据库里的现场一起删。
      * 编号先校验必须落在 datasets 目录内，避免被拼出越界路径。
      */
     public synchronized void deleteOne(String id) {
@@ -148,27 +229,30 @@ public class BridgeStore {
             throw new IllegalArgumentException("数据集编号不合法");
         }
         deleteTree(dir);
+        db.update("DELETE FROM bridge_datasets WHERE id = ?", id);
     }
 
     /** 批量删除；ids 为空表示清空全部数据集。返回实际删除的个数。 */
     public synchronized int delete(List<String> ids) {
         Path base = root().resolve("datasets").normalize();
-        if (!Files.exists(base)) {
-            return 0;
-        }
         if (ids == null || ids.isEmpty()) {
             int count = 0;
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(base)) {
-                for (Path child : stream) {
-                    if (Files.isDirectory(child)) {
-                        deleteTree(child);
-                        count++;
+            if (Files.exists(base)) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(base)) {
+                    for (Path child : stream) {
+                        if (Files.isDirectory(child)) {
+                            deleteTree(child);
+                            count++;
+                        }
                     }
+                } catch (IOException e) {
+                    throw new IllegalStateException("清空数据集失败：" + e.getMessage(), e);
                 }
-            } catch (IOException e) {
-                throw new IllegalStateException("清空数据集失败：" + e.getMessage(), e);
             }
-            return count;
+            // 目录和记录一起清，两边条数不一致时以多的为准，保证界面显示真的删干净了
+            long rows = db.count("SELECT COUNT(*) FROM bridge_datasets");
+            db.update("DELETE FROM bridge_datasets");
+            return (int) Math.max(count, rows);
         }
         int count = 0;
         for (String id : ids) {
@@ -183,6 +267,7 @@ public class BridgeStore {
                 deleteTree(dir);
                 count++;
             }
+            db.update("DELETE FROM bridge_datasets WHERE id = ?", id);
         }
         return count;
     }
@@ -326,14 +411,16 @@ public class BridgeStore {
     /* ==================== 自定义匹配规则 ==================== */
 
     public List<Map<String, String>> rules() {
-        Path file = rulesFile();
-        if (!Files.exists(file)) {
+        String body = db.kv(RULES_SCOPE);
+        if (body == null || body.isBlank()) {
             return new ArrayList<>();
         }
         try {
-            return mapper.readValue(file.toFile(), new TypeReference<>() {
+            List<Map<String, String>> rules = mapper.readValue(body, new TypeReference<>() {
             });
-        } catch (IOException e) {
+            return rules == null ? new ArrayList<>() : rules;
+        } catch (Exception e) {
+            log.warn("自定义匹配规则解析失败，按空规则处理：{}", e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -348,23 +435,14 @@ public class BridgeStore {
         rule.put("alias", alias);
         rule.put("at", now());
         rules.add(rule);
-        try {
-            Files.createDirectories(root());
-            mapper.writerWithDefaultPrettyPrinter().writeValue(rulesFile().toFile(), rules);
-        } catch (IOException e) {
-            throw new IllegalStateException("保存自定义规则失败：" + e.getMessage(), e);
-        }
+        db.kvPut(RULES_SCOPE, rules);
         return rules;
     }
 
     public synchronized List<Map<String, String>> removeRule(String alias) {
         List<Map<String, String>> rules = rules();
         rules.removeIf(item -> TextUtils.norm(item.get("alias")).equals(TextUtils.norm(alias)));
-        try {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(rulesFile().toFile(), rules);
-        } catch (IOException e) {
-            throw new IllegalStateException("删除自定义规则失败：" + e.getMessage(), e);
-        }
+        db.kvPut(RULES_SCOPE, rules);
         return rules;
     }
 }

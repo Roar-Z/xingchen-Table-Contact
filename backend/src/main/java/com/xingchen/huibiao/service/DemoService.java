@@ -2,6 +2,7 @@ package com.xingchen.huibiao.service;
 
 import com.xingchen.huibiao.config.AppProperties;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.dto.ApiRequests.CreateTaskRequest;
 import com.xingchen.huibiao.dto.ApiRequests.FileRef;
 import com.xingchen.huibiao.dto.ApiRequests.TaskConfig;
@@ -53,14 +54,19 @@ public class DemoService {
     private final FileService files;
     private final TaskService tasks;
     private final TaskStore store;
+    private final SqliteDb db;
+
+    /** kv 里的标记：示例只初始化一次，用户把任务全删了也不会在下次启动又冒出来 */
+    private static final String SEED_FLAG = "demo_seeded";
 
     public DemoService(AppProperties properties, DataPaths paths, FileService files, TaskService tasks,
-            TaskStore store) {
+            TaskStore store, SqliteDb db) {
         this.properties = properties;
         this.paths = paths;
         this.files = files;
         this.tasks = tasks;
         this.store = store;
+        this.db = db;
     }
 
     public Prepared prepare(String preset) {
@@ -97,19 +103,15 @@ public class DemoService {
     }
 
     /**
-     * 第一次启动、还没有任务文件时，跑两份示例，省得评委打开页面看到一片空白。
+     * 第一次启动、还没有任务时，跑两份示例，省得评委打开页面看到一片空白。
      * 只有真的读到了样例文件才会创建，不会写死假任务。
      *
-     * 注意：判断的是 tasks.json 是否存在，而不是任务数是否为 0 —— 用户把记录全删了，
-     * 重启后看到示例任务又冒出来，那不是“没删掉”，是这里又补了一份。
+     * 注意：判断的是数据库里的 demo_seeded 标记，而不是任务数是否为 0 ——
+     * 用户把记录全删了，重启后看到示例任务又冒出来，那不是“没删掉”，是这里又补了一份。
      */
     @EventListener(ApplicationReadyEvent.class)
     public void seedIfEmpty() {
-        if (!properties.isSeedDemo() || store.count() > 0) {
-            return;
-        }
-        // 任务文件已存在说明之前就有数据（哪怕现在被清空），不再补示例
-        if (Files.exists(paths.tasksFile())) {
+        if (!properties.isSeedDemo() || store.count() > 0 || db.flag(SEED_FLAG)) {
             return;
         }
         try {
@@ -126,6 +128,7 @@ public class DemoService {
                 tasks.create(new CreateTaskRequest(overtime.name(), overtime.brief(), overtime.refs(),
                         new TaskConfig("overtime", null, overtime.template().fileId, true, false)));
             }
+            db.setFlag(SEED_FLAG, true);
             log.info("已提交示例任务，前端打开就能看到真实处理结果");
         } catch (Exception e) {
             log.warn("演示数据初始化失败，不影响正常使用：{}", e.getMessage());

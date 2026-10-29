@@ -21,6 +21,7 @@
         <java.version>21</java.version>
         <poi.version>5.5.1</poi.version>
         <langchain4j.version>1.0.0</langchain4j.version>
+        <sqlite.version>3.47.1.0</sqlite.version>
     </properties>
 
     <dependencies>
@@ -50,6 +51,13 @@
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
             <version>${langchain4j.version}</version>
+        </dependency>
+
+        <!-- 本地库：单文件 SQLite，免安装、可整目录拷走；WAL 模式下读不挡写 -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>${sqlite.version}</version>
         </dependency>
     </dependencies>
 

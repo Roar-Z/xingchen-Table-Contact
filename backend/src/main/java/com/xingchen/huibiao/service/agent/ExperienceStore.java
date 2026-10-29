@@ -3,6 +3,7 @@ package com.xingchen.huibiao.service.agent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.util.TextUtils;
 import com.xingchen.huibiao.util.TimeUtils;
 import jakarta.annotation.PostConstruct;
@@ -10,11 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -28,6 +26,9 @@ import java.util.Set;
  * 每跑成功一单，就把这次“场景 + 模板 + 源表列 + 映射”记一条；下次遇到同类表，
  * 先用这些历史配置补齐当前映射的缺口，再交给规则/大模型兜底。
  * 没有向量库，用“模板名 + 场景 + 列名重合度”做检索，单机演示足够，也能解释清楚。
+ *
+ * 数据整体读写、条数很少（最多 30 条），所以落 SQLite 的 kv 表（scope = experiences），
+ * 不单开一张表；写入是原子的，不会出现写一半的 JSON。
  */
 @Service
 public class ExperienceStore {
@@ -35,32 +36,51 @@ public class ExperienceStore {
     private static final Logger log = LoggerFactory.getLogger(ExperienceStore.class);
     private static final int MAX_ITEMS = 30;
     private static final double HIT_SCORE = 0.7;
+    private static final String SCOPE = "experiences";
 
     private final DataPaths paths;
+    private final SqliteDb db;
     private final ObjectMapper mapper;
     private final List<Item> items = new ArrayList<>();
 
-    public ExperienceStore(DataPaths paths, ObjectMapper mapper) {
+    public ExperienceStore(DataPaths paths, SqliteDb db, ObjectMapper mapper) {
         this.paths = paths;
+        this.db = db;
         this.mapper = mapper;
     }
 
     @PostConstruct
     public void load() {
+        migrateLegacy();
+        items.clear();
+        String body = db.kv(SCOPE);
+        if (body != null && !body.isBlank()) {
+            try {
+                List<Item> loaded = mapper.readValue(body, new TypeReference<List<Item>>() {
+                });
+                if (loaded != null) {
+                    items.addAll(loaded);
+                }
+            } catch (Exception e) {
+                log.warn("读取智能体经验失败，本次按空经验启动：{}", e.getMessage());
+            }
+        }
+    }
+
+    /** 老版本的 agent-experience.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    private void migrateLegacy() {
         Path file = paths.agentExperienceFile();
-        if (!Files.isRegularFile(file)) {
+        if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
             return;
         }
         try {
-            List<Item> loaded = mapper.readValue(Files.readString(file, StandardCharsets.UTF_8),
-                    new TypeReference<List<Item>>() {
-                    });
-            if (loaded != null) {
-                items.clear();
-                items.addAll(loaded);
-            }
+            List<Item> loaded = mapper.readValue(Files.readString(file), new TypeReference<List<Item>>() {
+            });
+            db.kvPut(SCOPE, loaded == null ? new ArrayList<>() : loaded);
+            log.info("已把 {} 条旧经验导入数据库", loaded == null ? 0 : loaded.size());
+            db.retireLegacy(file);
         } catch (Exception e) {
-            log.warn("读取智能体经验失败，本次按空经验启动：{}", e.getMessage());
+            log.warn("旧经验导入失败，本次按空经验启动：{}", e.getMessage());
         }
     }
 
@@ -166,16 +186,9 @@ public class ExperienceStore {
         return sb.toString();
     }
 
+    /** 整份经验一次原子写入，不会出现写一半的列表。 */
     private void write() {
-        Path file = paths.agentExperienceFile();
-        try {
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.writeString(tmp, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(items),
-                    StandardCharsets.UTF_8);
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            log.warn("保存智能体经验失败：{}", e.getMessage());
-        }
+        db.kvPut(SCOPE, items);
     }
 
     /** 一条经验里的一个映射，只记文件名和列名，换机器、换 fileId 也能复用。 */

@@ -3,6 +3,7 @@ package com.xingchen.huibiao.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.model.FileMeta;
 import com.xingchen.huibiao.util.TextUtils;
 import jakarta.annotation.PostConstruct;
@@ -14,7 +15,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -27,11 +27,15 @@ import java.util.UUID;
 
 /**
  * 上传文件落盘 + 元信息登记。源文件只读，处理时另开工作簿，不会改到原表。
+ *
+ * 索引是整体读写的列表，条数不多，落 SQLite 的 kv 表（scope = files）；
+ * xlsx 本体仍留在 data/uploads 下，库里只存元信息，一个 db 文件能带走全部索引。
  */
 @Service
 public class FileService {
 
     private static final Logger log = LoggerFactory.getLogger(FileService.class);
+    private static final String SCOPE = "files";
 
     private static final Map<String, String> ROLE_LABELS = Map.of(
             "auto", "自动识别",
@@ -43,6 +47,7 @@ public class FileService {
     );
 
     private final DataPaths paths;
+    private final SqliteDb db;
     private final ObjectMapper mapper;
     private final ExcelService excel;
     private final HeaderCatalog catalog;
@@ -56,9 +61,10 @@ public class FileService {
     private record CachedSheet(long at, long modified, int config, ExcelService.SheetData data) {
     }
 
-    public FileService(DataPaths paths, ObjectMapper mapper, ExcelService excel,
+    public FileService(DataPaths paths, SqliteDb db, ObjectMapper mapper, ExcelService excel,
                        HeaderCatalog catalog, SettingsService settings) {
         this.paths = paths;
+        this.db = db;
         this.mapper = mapper;
         this.excel = excel;
         this.catalog = catalog;
@@ -67,18 +73,37 @@ public class FileService {
 
     @PostConstruct
     public synchronized void load() {
+        migrateLegacy();
+        files.clear();
+        String body = db.kv(SCOPE);
+        if (body != null && !body.isBlank()) {
+            try {
+                List<FileMeta> loaded = mapper.readValue(body, new TypeReference<List<FileMeta>>() {
+                });
+                if (loaded != null) {
+                    files.addAll(loaded);
+                }
+            } catch (Exception e) {
+                log.warn("文件索引读取失败：{}", e.getMessage());
+            }
+        }
+        backfillDigests();
+    }
+
+    /** 老版本的 files.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    private void migrateLegacy() {
         Path file = paths.filesFile();
-        if (!Files.exists(file)) {
+        if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
             return;
         }
         try {
-            List<FileMeta> loaded = mapper.readValue(file.toFile(), new TypeReference<>() {
+            List<FileMeta> loaded = mapper.readValue(file.toFile(), new TypeReference<List<FileMeta>>() {
             });
-            files.clear();
-            files.addAll(loaded);
-            backfillDigests();
-        } catch (IOException e) {
-            log.warn("文件索引读取失败：{}", e.getMessage());
+            db.kvPut(SCOPE, loaded == null ? new ArrayList<>() : loaded);
+            log.info("已把 {} 条旧文件索引导入数据库", loaded == null ? 0 : loaded.size());
+            db.retireLegacy(file);
+        } catch (Exception e) {
+            log.warn("旧文件索引导入失败，先按空索引启动：{}", e.getMessage());
         }
     }
 
@@ -114,13 +139,11 @@ public class FileService {
         }
     }
 
+    /** 整份索引一次原子写入：数据库要么是写入前的样子，要么是写入后的样子。 */
     private synchronized void save() {
-        Path file = paths.filesFile();
-        Path temp = file.resolveSibling(file.getFileName() + ".tmp");
         try {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), files);
-            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
+            db.kvPut(SCOPE, files);
+        } catch (RuntimeException e) {
             throw new IllegalStateException("保存文件索引失败：" + e.getMessage(), e);
         }
     }

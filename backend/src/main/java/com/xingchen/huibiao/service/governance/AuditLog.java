@@ -1,7 +1,9 @@
 package com.xingchen.huibiao.service.governance;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
+import com.xingchen.huibiao.config.SqliteDb;
 import com.xingchen.huibiao.util.TimeUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,18 +13,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 审计日志：只追加、不改写。
+ * 审计日志：只追加、不改写，落 SQLite 的 audit_logs 表。
+ *
+ * 固定字段（时间、动作、对象、详情、操作人）单独成列，附加信息统一放 extra；
+ * 分页用 LIMIT + OFFSET，只读当前页；本地只留最近 100 条，超出的按主键删最旧的。
  *
  * 没有账号体系时，“谁操作的”取网关/前端透传的 X-Operator，缺省记来源 IP；
  * 这样以后接统一身份，只需要让网关注入这个头，日志格式不用改。
@@ -33,28 +39,61 @@ public class AuditLog {
     private static final Logger log = LoggerFactory.getLogger(AuditLog.class);
     /** 只保留最近 100 条审计记录，超出后丢最旧的；单页最多取 50 条。 */
     static final int MAX_ENTRIES = 100;
-    private static final int MAX_READ = MAX_ENTRIES;
     private static final int MAX_PAGE_SIZE = 50;
 
     private final DataPaths paths;
+    private final SqliteDb db;
     private final ObjectMapper mapper;
 
-    public AuditLog(DataPaths paths, ObjectMapper mapper) {
+    public AuditLog(DataPaths paths, SqliteDb db, ObjectMapper mapper) {
         this.paths = paths;
+        this.db = db;
         this.mapper = mapper;
     }
 
-    /** 启动时把历史遗留的超长日志收敛到上限，避免旧文件一直超出 100 条。 */
+    /** 启动时收敛：老版本 jsonl 日志先一次性导入，再把库里超长部分裁到上限。 */
     @PostConstruct
     public void init() {
+        migrateLegacy();
+        db.update("DELETE FROM audit_logs WHERE id NOT IN ("
+                + "SELECT id FROM audit_logs ORDER BY id DESC LIMIT " + MAX_ENTRIES + ")");
+    }
+
+    /**
+     * 老版本把审计日志写成 audit.log.jsonl，一行一条。只在表还空着时导入一次，
+     * 导完把原文件改名留档，之后再启动就只读写数据库。
+     */
+    private void migrateLegacy() {
         Path file = paths.auditLogFile();
-        if (!Files.isRegularFile(file)) {
+        if (!db.isEmpty("audit_logs") || !Files.isRegularFile(file)) {
             return;
         }
         try {
-            trim(file);
-        } catch (IOException e) {
-            log.warn("审计日志收敛失败：{}", e.getMessage());
+            List<String> lines = Files.readAllLines(file);
+            List<Map<String, Object>> entries = new ArrayList<>();
+            for (String line : lines) {
+                if (line == null || line.isBlank()) {
+                    continue;
+                }
+                try {
+                    entries.add(mapper.readValue(line, new TypeReference<Map<String, Object>>() {
+                    }));
+                } catch (Exception ignored) {
+                    // 单行损坏跳过，不影响其余历史记录
+                }
+            }
+            db.tx(connection -> {
+                for (Map<String, Object> entry : entries) {
+                    insert(connection, entry);
+                }
+                return null;
+            });
+            db.update("DELETE FROM audit_logs WHERE id NOT IN ("
+                    + "SELECT id FROM audit_logs ORDER BY id DESC LIMIT " + MAX_ENTRIES + ")");
+            log.info("已把 {} 条旧审计日志导入数据库", entries.size());
+            db.retireLegacy(file);
+        } catch (Exception e) {
+            log.warn("旧审计日志导入失败，本次按空日志启动：{}", e.getMessage());
         }
     }
 
@@ -79,27 +118,26 @@ public class AuditLog {
         append(entry);
     }
 
+    /** 最近若干条，新的在前；只读需要的条数，不再整份读进内存。 */
     public List<Map<String, Object>> recent(int limit) {
-        int size = Math.min(Math.max(limit, 1), MAX_READ);
-        List<Map<String, Object>> all = readAll();
-        return new ArrayList<>(all.subList(0, Math.min(size, all.size())));
+        int size = Math.min(Math.max(limit, 1), MAX_ENTRIES);
+        return db.list("SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?", this::toMap, size);
     }
 
     /**
      * 审计日志分页：新的在前，返回 items / total / page / pages。
-     * 只读当前页，不把整个文件返回给前端。
      */
     public Map<String, Object> page(int page, int pageSize) {
         int size = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        List<Map<String, Object>> all = readAll();
-        int total = all.size();
+        int total = (int) db.count("SELECT COUNT(*) FROM audit_logs");
         int pages = total == 0 ? 1 : (int) Math.ceil(total * 1.0 / size);
         int current = Math.min(Math.max(page, 1), pages);
-        int from = Math.min((current - 1) * size, total);
-        int to = Math.min(from + size, total);
+        int offset = (current - 1) * size;
+        List<Map<String, Object>> items = db.list(
+                "SELECT * FROM audit_logs ORDER BY id DESC LIMIT ? OFFSET ?", this::toMap, size, offset);
 
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("items", new ArrayList<>(all.subList(from, to)));
+        out.put("items", items);
         out.put("total", total);
         out.put("page", current);
         out.put("page_size", size);
@@ -109,77 +147,72 @@ public class AuditLog {
     }
 
     /**
-     * 运行观测里的「清理日志」：直接删掉审计日志文件，
-     * 下一次有新动作时按追加的方式重新创建。
+     * 运行观测里的「清理日志」：清空审计日志表，返回清掉的条数。
      */
     public synchronized int clear() {
-        Path file = paths.auditLogFile();
-        int count = readAll().size();
-        try {
-            Files.deleteIfExists(file);
-        } catch (IOException e) {
-            log.warn("清理审计日志失败：{}", e.getMessage());
-            throw new IllegalStateException("审计日志正在被占用，请稍后再试");
-        }
-        return count;
-    }
-
-    /** 从新到旧读出全部留存记录；单行损坏跳过，不影响整体查询。 */
-    private List<Map<String, Object>> readAll() {
-        Path file = paths.auditLogFile();
-        if (!Files.isRegularFile(file)) {
-            return List.of();
-        }
-        try {
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            List<Map<String, Object>> out = new ArrayList<>();
-            for (int i = lines.size() - 1; i >= 0 && out.size() < MAX_READ; i--) {
-                String line = lines.get(i);
-                if (line == null || line.isBlank()) {
-                    continue;
-                }
-                try {
-                    out.add(mapper.readValue(line, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {
-                    }));
-                } catch (Exception ignored) {
-                    // 单行损坏不影响整体查询
-                }
+        return db.tx(connection -> {
+            int count;
+            try (PreparedStatement ps = connection.prepareStatement("SELECT COUNT(*) FROM audit_logs");
+                 ResultSet rs = ps.executeQuery()) {
+                count = rs.next() ? rs.getInt(1) : 0;
             }
-            return out;
-        } catch (IOException e) {
-            log.warn("读取审计日志失败：{}", e.getMessage());
-            return List.of();
-        }
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM audit_logs")) {
+                ps.executeUpdate();
+            }
+            return count;
+        });
     }
 
     private void append(Map<String, Object> entry) {
-        Path file = paths.auditLogFile();
         try {
-            String line = mapper.writeValueAsString(entry) + System.lineSeparator();
-            Files.writeString(file, line, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            trim(file);
-        } catch (IOException e) {
+            db.tx(connection -> {
+                insert(connection, entry);
+                // 每次追加后把表收敛到最近 MAX_ENTRIES 条，长期运行也不会无限增长
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "DELETE FROM audit_logs WHERE id NOT IN ("
+                                + "SELECT id FROM audit_logs ORDER BY id DESC LIMIT " + MAX_ENTRIES + ")")) {
+                    ps.executeUpdate();
+                }
+                return null;
+            });
+        } catch (Exception e) {
             log.warn("写审计日志失败：{}", e.getMessage());
         }
     }
 
-    /** 每次追加后把文件收敛到最近 MAX_ENTRIES 条，避免长期运行无限增长。 */
-    private void trim(Path file) throws IOException {
-        List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-        List<String> kept = new ArrayList<>();
-        for (String line : lines) {
-            if (line != null && !line.isBlank()) {
-                kept.add(line);
-            }
+    private void insert(Connection connection, Map<String, Object> entry) throws SQLException {
+        Map<String, Object> extra = new LinkedHashMap<>(entry);
+        String at = text(extra.remove("at"));
+        String action = text(extra.remove("action"));
+        String target = text(extra.remove("target"));
+        String detail = text(extra.remove("detail"));
+        String actor = text(extra.remove("actor"));
+        try (PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO audit_logs (at, action, target, detail, actor, extra) VALUES (?, ?, ?, ?, ?, ?)")) {
+            ps.setString(1, at);
+            ps.setString(2, action);
+            ps.setString(3, target);
+            ps.setString(4, detail);
+            ps.setString(5, actor);
+            ps.setString(6, extra.isEmpty() ? "{}" : db.toJson(extra));
+            ps.executeUpdate();
         }
-        if (kept.size() <= MAX_ENTRIES) {
-            return;
-        }
-        List<String> tail = kept.subList(kept.size() - MAX_ENTRIES, kept.size());
-        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        Files.write(tmp, tail, StandardCharsets.UTF_8);
-        Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /** 行 → 前端看到的结构：固定字段在前，附加字段展开在后面，和旧版本 jsonl 的格式一致。 */
+    private Map<String, Object> toMap(ResultSet rs) throws SQLException {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("at", rs.getString("at"));
+        row.put("action", rs.getString("action"));
+        row.put("target", rs.getString("target"));
+        row.put("detail", rs.getString("detail"));
+        row.put("actor", rs.getString("actor"));
+        row.putAll(db.jsonMap(rs.getString("extra")));
+        return row;
+    }
+
+    private String text(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     private String actor() {
