@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>汇表 · 设计文档</title>
+<style>
+  :root {
+    --paper: #ffffff;
+    --paper-2: #fafbfc;
+    --ink: #1f2329;
+    --ink-2: #4e5969;
+    --muted: #86909c;
+    --line: #e2e5ea;
+    --line-soft: #eef0f3;
+    --accent: #2b5fd9;
+    --accent-soft: #eef3ff;
+    --amber: #a96400;
+    --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", "Courier New", monospace;
+    --ui: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.75;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); font-size: 12px; background: #f2f3f5; padding: 1px 5px; border-radius: 3px; }
+
+  .shell { display: flex; min-height: 100vh; }
+  .nav {
+    width: 232px; flex: none;
+    border-right: 1px solid var(--line);
+    padding: 24px 16px 36px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; padding: 0 6px; }
+  .brand-mark {
+    width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-size: 13px; font-weight: 600;
+  }
+  .brand b { font-size: 14px; font-weight: 600; }
+  .brand small { display: block; font-size: 11px; color: var(--muted); }
+  .nav-title { margin: 20px 0 6px; padding: 0 8px; font-size: 11px; color: var(--muted); font-weight: 600; }
+  .nav a { display: block; padding: 5px 8px; border-radius: 4px; color: var(--ink-2); font-size: 12.5px; }
+  .nav a:hover { background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+
+  main { flex: 1; min-width: 0; padding: 40px clamp(24px, 5vw, 64px) 90px; }
+  .doc { max-width: 860px; }
+  .eyebrow { font-size: 12px; color: var(--muted); }
+  h1 { font-size: 26px; line-height: 1.35; margin: 6px 0 10px; font-weight: 600; }
+  .lead { color: var(--ink-2); max-width: 680px; margin: 0 0 28px; }
+  h2 {
+    font-size: 18px; margin: 44px 0 14px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
+    font-weight: 600; scroll-margin-top: 20px;
+  }
+  h3 { font-size: 14px; margin: 24px 0 8px; font-weight: 600; }
+  p { margin: 8px 0; color: var(--ink-2); }
+  ul, ol { margin: 8px 0 8px 20px; padding: 0; color: var(--ink-2); }
+  li { margin: 4px 0; }
+
+  .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin: 22px 0 8px; }
+  .meta { border: 1px solid var(--line); background: var(--paper-2); padding: 9px 12px; border-radius: 6px; }
+  .meta span { display: block; font-size: 11px; color: var(--muted); }
+  .meta b { font-size: 12.5px; font-weight: 500; color: var(--ink); }
+
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 14px 0 6px; }
+  .flow-step {
+    border: 1px solid var(--line); background: var(--paper-2); padding: 4px 10px; border-radius: 4px;
+    font-size: 12px; color: var(--ink-2);
+  }
+  .flow-step b { color: var(--accent); font-size: 11px; margin-right: 5px; }
+  .flow-arrow { color: var(--muted); font-size: 12px; }
+
+  table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 10px 0 6px; }
+  table.grid th, table.grid td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  table.grid th { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  table.grid td:first-child { color: var(--ink); white-space: nowrap; }
+
+  .note {
+    border-left: 2px solid var(--amber); background: #fff8ec; padding: 8px 12px;
+    font-size: 12.5px; color: #7a4f0c; margin: 12px 0; border-radius: 0 4px 4px 0;
+  }
+  .note.pine { border-color: var(--accent); background: var(--accent-soft); color: #1f4db8; }
+  .note b { font-weight: 600; }
+
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 820px) {
+    .nav { display: none; }
+    main { padding: 26px 20px 60px; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="nav">
+    <div class="brand">
+      <div class="brand-mark">汇</div>
+      <div><b>汇表</b><small>设计文档</small></div>
+    </div>
+    <div class="nav-title">设计</div>
+    <a href="#background">背景与目标</a>
+    <a href="#users">谁在用</a>
+    <a href="#structure">页面结构</a>
+    <a href="#steps">五个步骤</a>
+    <a href="#template">模板决定导出列</a>
+    <a href="#rules">规则与两个开关</a>
+    <a href="#anomaly">异常怎么处理</a>
+    <a href="#visual">视觉与文案</a>
+    <a href="#tech">技术方案</a>
+    <a href="#mapping">和比赛流程的对应</a>
+    <div class="nav-title">其他</div>
+    <a href="/docs/product.html">产品设计文档</a>
+    <a href="/docs/dev.html">开发文档</a>
+    <a href="/docs/">接口文档</a>
+    <a href="/">打开系统</a>
+  </nav>
+
+  <main>
+    <div class="doc">
+      <div class="eyebrow">星尘汇表智联 · 2026 东莞百景大赛</div>
+      <h1>汇表设计文档</h1>
+      <p class="lead">
+        这份文档记录页面为什么这么分、每一步为什么这样设计，主要给团队自己看，答辩时也能拿来解释取舍。
+        功能和字段细节在需求分析、接口文档里，这里不重复。
+      </p>
+
+      <div class="meta-grid">
+        <div class="meta"><span>产品形态</span><b>Web 单页应用</b></div>
+        <div class="meta"><span>前端</span><b>Vue 3 + Element Plus</b></div>
+        <div class="meta"><span>后端</span><b>Spring Boot 3.4.5</b></div>
+        <div class="meta"><span>数据</span><b>data/*.json</b></div>
+        <div class="meta"><span>主流程</span><b>五个步骤</b></div>
+        <div class="meta"><span>版本</span><b>v0.8.2</b></div>
+      </div>
+
+      <h2 id="background">背景与目标</h2>
+      <p>
+        行政 HR 每个月要处理两类表格：一类是把请假明细并到年假余额上，算清楚谁扣年假、谁转事假；
+        另一类是把各车间的加班记录按部门和月份筛出来，回填到 HR 系统。这些表来自 OA、ERP、考勤机，
+        表头叫法都不一样，平时靠人手复制粘贴、写 VLOOKUP、对着模板一列列挪。
+      </p>
+      <p>我们想做的不是“再做一个网页版 Excel”，而是把这段固定的手工活压成一次操作：</p>
+      <ul>
+        <li>源表不用先整理，导出什么样就传什么样，格式问题交给程序判断；</li>
+        <li>导出哪些列不写死，以企业手上的 HR 导入模板为准；</li>
+        <li>算完直接产出能导入的文件，有问题的行单独列出来，不用回头翻原表。</li>
+      </ul>
+      <div class="note pine">
+        <b>边界：</b>系统不替代 HR 系统，也不改源数据。它只负责“读表、对齐字段、按规则算、出表、记录异常”，
+        原始文件和产出文件都留在本机。
+      </div>
+
+      <h2 id="users">谁在用</h2>
+      <p>
+        主要是行政和 HR 专员，他们熟悉 Excel，但不写代码，也不想学一套新系统。
+        所以页面里不用“ETL”“Schema”这类词，能说“表头”“列”“异常行”就说中文。
+      </p>
+      <table class="grid">
+        <tr><th>角色</th><th>关心什么</th><th>对设计的影响</th></tr>
+        <tr>
+          <td>HR 专员</td>
+          <td>处理了多少行，哪些行没成功，能不能直接导入</td>
+          <td>结果页先给统计和异常表，下载放在最后一步</td>
+        </tr>
+        <tr>
+          <td>部门助理</td>
+          <td>上传的表有没有识别错列</td>
+          <td>上传后马上把识别到的表头铺出来，能看能改</td>
+        </tr>
+        <tr>
+          <td>评审老师</td>
+          <td>系统边界清不清楚，数字是不是真算出来的</td>
+          <td>保留接口文档和样例数据，每一步都能追到数字来源</td>
+        </tr>
+      </table>
+
+      <h2 id="structure">页面结构</h2>
+      <p>
+        整个系统只有两个入口：新建任务和任务记录。没有工作台，也没有仪表盘，
+        做完一次任务就离开或去看记录，不需要在首页停留。
+      </p>
+      <p>
+        新建任务页按业务顺序拆成五个步骤，用步骤条串起来，一次只展开一块。
+        因为我们自己试的时候发现，五个区块从上到下堆在一页，很难判断“现在做到哪”，出错也不知道该往上翻到哪；
+        拆成步骤后每一步只回答一个问题，底部固定“上一步 / 下一步”，条件没满足时按钮直接禁用并写明缺什么。
+      </p>
+
+      <h2 id="steps">五个步骤</h2>
+      <div class="flow">
+        <span class="flow-step"><b>01</b>上传文件</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>02</b>字段映射</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>03</b>业务规则</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>04</b>执行与预览</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>05</b>下载输出</span>
+      </div>
+
+      <h3>1. 上传文件</h3>
+      <p>
+        源表可以选多个，目标模板只收一个。传完把每张表的行数、列数、表头标签直接显示出来，
+        用户一眼能看出“这一列其实是请假类型，不是部门”。模板区固定一句提醒：目标模板决定导出文件的表头和格式，格式不对 HR 系统会导入失败。
+      </p>
+      <p class="note">
+        源表和模板缺任意一个，“下一步”就不亮，并在底部写清缺的是哪一项，避免配到一半跑到最后才报错。
+      </p>
+
+      <h3>2. 字段映射</h3>
+      <p>
+        左边是源表字段，右边是模板字段，中间按表头词典先给一版推荐。用户可以改来源列、删掉不用的行、
+        补上模板里多出来的列，也可以把当前这套对应关系存成“映射方案”，下次同类任务直接套用。
+      </p>
+      <p>
+        映射是否有效是实时判断的：文件被移除、源列不存在，这一行立刻回到“待映射”。
+        打开严格格式校验后，还有必填字段没映射就不让执行。
+      </p>
+
+      <h3>3. 业务规则</h3>
+      <p>
+        规则用一句中文写清楚就行，比如“先扣年假，不够的转事假”。页面另外给了两个内置模板
+        ——年假抵扣·不足转事假、按部门时间段筛选加班——点一下就填进去，现场演示不用手打。
+        写完后端会解析成场景、关联键、部门、日期区间和计算方式，解析结果放在映射区顶部，方便确认系统理解的和你说的是一回事。
+      </p>
+
+      <h3>4. 执行与预览</h3>
+      <p>
+        点“开始智能处理”后创建任务，页面每 1.2 秒拉一次进度，日志逐条往上走。
+        完成后先给统计（源表行数、命中条件、输出行数、年假抵扣、事假合计、异常行），
+        再给两个预览表：处理成功的结果表、被隔离的异常数据。
+        预览只看前若干行，完整数据在文件里，避免页面被大表拖慢。
+      </p>
+
+      <h3>5. 下载输出</h3>
+      <p>
+        结果表按模板生成，文件名带日期；异常日志导出成 CSV，带 BOM，Windows 上的 Excel 双击不乱码。
+        这两个文件就是一次任务的交付物，下载完这一步就结束了。
+      </p>
+
+      <h2 id="template">模板决定导出列，不做格式比对</h2>
+      <p>
+        最早的做法是“上传模板后和内置格式比对，提示列不一致”，但这对用户没什么帮助：
+        企业 HR 系统要哪些列，我们照做就行。现在改成完全按模板走：
+      </p>
+      <ul>
+        <li>解析阶段就把模板表头读进来，作为目标列返回（<code>built_in=false</code>）；</li>
+        <li>导出时按模板列名逐列取值，顺序和模板一致，不多列也不少列；</li>
+        <li>模板里某一列在源表找不到来源时，在映射区提示，不重排整份文件；</li>
+        <li>没有模板就不推荐映射，也不允许运行。</li>
+      </ul>
+      <div class="note">
+        样例数据也一样：点“载入样例”会同时载入配套的 HR 导入模板，
+        导出的列和真实模板一致，不存在“演示用内置格式、正式用模板”的差别。
+      </div>
+
+      <h2 id="rules">规则和两个开关</h2>
+      <p>
+        业务规则是自然语言输入加内置快捷模板。后端先用规则和表头词典判断场景，把握够就不调用模型；
+        设置 <code>HUBIAO_LLM_ENABLED</code> 之后，只有规则拿不准时才会问一次模型，模型只返回场景和一句提示，不参与计算。
+      </p>
+      <p>页面上有两个开关，都在后端真实生效：</p>
+      <table class="grid">
+        <tr><th>开关</th><th>默认</th><th>行为</th></tr>
+        <tr>
+          <td>脏数据隔离</td>
+          <td>开启</td>
+          <td>问题行整行隔离，不进结果表，写进异常日志；关掉后照常输出，只在提示里说明有多少条问题数据。</td>
+        </tr>
+        <tr>
+          <td>严格格式校验</td>
+          <td>关闭</td>
+          <td>开启后模板列找不到来源、必填字段缺失、格式不对，直接判失败并说明原因，不再自动兜底。</td>
+        </tr>
+      </table>
+
+      <h2 id="anomaly">异常怎么处理</h2>
+      <p>异常没有合并成一句“出错了”，而是按原因分开，方便回原表核对：</p>
+      <table class="grid">
+        <tr><th>类型</th><th>触发条件</th></tr>
+        <tr><td>年假缺失</td><td>请假单里的工号在年假余额表里找不到</td></tr>
+        <tr><td>时长异常</td><td>请假或加班时长超出阈值，或者不是有效数字</td></tr>
+        <tr><td>日期异常</td><td>起止日期解析失败，或者结束时间早于开始</td></tr>
+        <tr><td>工号缺失</td><td>关键关联字段为空</td></tr>
+        <tr><td>字段缺失</td><td>模板要求的必填列在源表里找不到</td></tr>
+        <tr><td>编码异常</td><td>单元格出现 锟斤拷、烫烫烫、� 这类认不出的字符</td></tr>
+      </table>
+      <p>
+        编码异常是这一版补的：实际导出的表里经常混着 GBK 和 UTF-8 转换失败的乱码，
+        这种行就算字段齐了也不可信，放进结果表只会增加核对成本。
+      </p>
+
+      <h2 id="visual">视觉与文案</h2>
+      <p>
+        整体是浅灰底、白卡片、一个主色，圆角 6px，不用渐变和大阴影，也不放插画和引导气泡，
+        避免把内部工具做成宣传页。
+      </p>
+      <table class="grid">
+        <tr><th>用途</th><th>色值</th></tr>
+        <tr><td>主色</td><td>#2B5FD9</td></tr>
+        <tr><td>页面背景</td><td>#F5F6F8</td></tr>
+        <tr><td>正文</td><td>#1F2329</td></tr>
+        <tr><td>次要文字</td><td>#86909C</td></tr>
+        <tr><td>提醒</td><td>#A96400</td></tr>
+      </table>
+      <p>文案上有两条约束：</p>
+      <ul>
+        <li>按钮只说动作，例如“开始智能处理”“下载结果表”，不写“一键搞定”“立即体验”；</li>
+        <li>报错要说清下一步做什么，例如“还缺目标模板，导出列由它决定”，而不是只给一个错误码。</li>
+      </ul>
+
+      <h2 id="tech">技术方案</h2>
+      <table class="grid">
+        <tr><th>部分</th><th>选型</th><th>原因</th></tr>
+        <tr><td>前端</td><td>Vue 3 + Vue Router + Element Plus</td><td>表格和上传组件现成，时间花在流程上</td></tr>
+        <tr><td>后端</td><td>Spring Boot 3.4.5（Java 21）</td><td>文件处理和异步任务直接，部署只要一个 jar</td></tr>
+        <tr><td>表格读写</td><td>Apache POI</td><td>要同时读写 .xls 和 .xlsx，还得按模板写出能导入的文件</td></tr>
+        <tr><td>语义识别</td><td>LangChain4j（可选）</td><td>只在规则拿不准时兜底，关掉之后系统照样能跑</td></tr>
+        <tr><td>存储</td><td>JSON 文件</td><td>单机演示不用装数据库，任务和文件登记都放在 data/ 下</td></tr>
+      </table>
+      <p>
+        模型和计算是分开的：场景判断可以不确定，数字必须可复现。
+        同样的输入重复跑，统计结果一致，现场复验也方便。
+      </p>
+
+      <h2 id="mapping">和比赛流程的对应</h2>
+      <div class="flow">
+        <span class="flow-step">上传源文件</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">上传目标模板</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">规则配置</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">执行智能处理</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">预览结果</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">异常处理</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">下载交付物</span>
+      </div>
+      <p>
+        七个动作在界面上落在五个步骤里：上传源文件和上传模板合成第 1 步，预览、异常和下载分别是第 4、5 步。
+        合并的原因很简单，它们用的是同一批上传结果，拆开只会多一次点击。
+      </p>
+
+      <footer>
+        星尘汇表智联 · 2026 东莞百景大赛 · v0.8.2
+        &nbsp;·&nbsp; <a href="/docs/">接口文档</a>
+        &nbsp;·&nbsp; <a href="/">打开系统</a>
+      </footer>
+    </div>
+  </main>
+</div>
+</body>
+</html>

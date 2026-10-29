@@ -40,6 +40,8 @@ public class BridgeStore {
 
     private static final Set<String> TABLE_EXT = Set.of(".xlsx", ".xls", ".csv");
     private static final int MAX_FILES = 300;
+    /** 最近记录最多返回 100 条，与页面上的清理入口配合 */
+    private static final int MAX_RECENT = 100;
     private static final long MAX_ENTRY_BYTES = 40L * 1024 * 1024;
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -128,7 +130,72 @@ public class BridgeStore {
             return list;
         }
         list.sort(Comparator.comparing((BridgeDataset ds) -> ds.createdAt == null ? "" : ds.createdAt).reversed());
-        return list.size() > 20 ? list.subList(0, 20) : list;
+        // 最近记录列表最多返回 100 条，配合前端的滚动与清理入口
+        return list.size() > MAX_RECENT ? list.subList(0, MAX_RECENT) : list;
+    }
+
+    /**
+     * 删除一个数据集：整目录连同源表、方案与产出一起清掉。
+     * 编号先校验必须落在 datasets 目录内，避免被拼出越界路径。
+     */
+    public synchronized void deleteOne(String id) {
+        if (TextUtils.norm(id).isEmpty()) {
+            return;
+        }
+        Path base = root().resolve("datasets").normalize();
+        Path dir = datasetDir(id);
+        if (!dir.startsWith(base) || dir.equals(base)) {
+            throw new IllegalArgumentException("数据集编号不合法");
+        }
+        deleteTree(dir);
+    }
+
+    /** 批量删除；ids 为空表示清空全部数据集。返回实际删除的个数。 */
+    public synchronized int delete(List<String> ids) {
+        Path base = root().resolve("datasets").normalize();
+        if (!Files.exists(base)) {
+            return 0;
+        }
+        if (ids == null || ids.isEmpty()) {
+            int count = 0;
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(base)) {
+                for (Path child : stream) {
+                    if (Files.isDirectory(child)) {
+                        deleteTree(child);
+                        count++;
+                    }
+                }
+            } catch (IOException e) {
+                throw new IllegalStateException("清空数据集失败：" + e.getMessage(), e);
+            }
+            return count;
+        }
+        int count = 0;
+        for (String id : ids) {
+            if (TextUtils.norm(id).isEmpty()) {
+                continue;
+            }
+            Path dir = datasetDir(id);
+            if (!dir.startsWith(base) || dir.equals(base)) {
+                continue;
+            }
+            if (Files.exists(dir)) {
+                deleteTree(dir);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void deleteTree(Path dir) {
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+            List<Path> paths = walk.sorted(Comparator.reverseOrder()).toList();
+            for (Path path : paths) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("删除数据集失败：" + e.getMessage(), e);
+        }
     }
 
     /**

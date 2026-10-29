@@ -113,6 +113,13 @@ public class DataPaths {
         return root.resolve("sheets.json");
     }
 
+    /**
+     * 已删除表格留下的一条「删除表格」日志。表本身没了，但操作日志里要留痕。
+     */
+    public Path sheetLogsFile() {
+        return root.resolve("sheet-logs.json");
+    }
+
     public Path sheetPath(String sheetId) {
         return sheets.resolve(sheetId + ".xlsx").normalize();
     }

@@ -7,9 +7,10 @@
  * 跨表计算、隔离异常行，最后输出能直接导入目标系统的标准表。
  *
  * 页面上的顺序就是它干活的顺序：
- * 交付数据集 → 自然语言指令 → 规划方案（用户确认）→ 执行 → 结果
+ * 提交数据集 → 说明业务目标 → 核对方案（用户确认）→ 执行 → 交付结果
+ * 同一份进度会同步到左侧导航栏的「汇表智能体」卡片：状态、本次调用的原子能力、步数、规则条数。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ElButton,
   ElDialog,
@@ -22,6 +23,16 @@ import {
   ElUpload
 } from 'element-plus'
 import Icon from './Icon.vue'
+import {
+  railDetail,
+  railMemory,
+  railMemoryRequest,
+  railScope,
+  railState,
+  railSteps,
+  railTools,
+  railTone
+} from '../agentRail'
 import { api } from '../api'
 import { useToast } from '../toast'
 
@@ -50,6 +61,8 @@ const standardFields = ref([])
 const ruleDraft = ref({ standard: 'emp_no', alias: '' })
 
 const recent = ref([])
+// 「最近记录」下拉：点图标展开，点空白处收起
+const recentOpen = ref(false)
 const openTables = ref([])
 
 const resultTab = ref('ok')
@@ -57,19 +70,19 @@ const okTable = ref({ columns: [], rows: [], total: 0, page: 1, size: 20 })
 const anomalyTable = ref({ columns: [], rows: [], total: 0, page: 1, size: 20 })
 const rowsBusy = ref(false)
 
-/* ---------------- 等待期间的过程文案：让“在干活”可感知 ---------------- */
+/* ---------------- 等待期间的过程文案：让“正在处理”可感知 ---------------- */
 const PLAN_TICKS = [
-  '扫描数据集目录，逐个识别表格身份…',
-  '解析表头、行数和样例值…',
-  '区分 HR 入职表 / ERP 薪资表 / OA 单据…',
-  '对齐不同系统的同义字段…',
-  '确定关联键、计算口径和筛选条件…',
-  '整理方案与异常规则…'
+  '遍历数据集目录，判定各表的业务归属…',
+  '读取表头、行数与样例值…',
+  '对齐各系统含义相同、命名不同的字段…',
+  '确定关联键、计算口径与筛选条件…',
+  '校验计算列、异常检查与输出列…',
+  '汇总执行方案，等待用户核对…'
 ]
 const RUN_TICKS = [
-  '按关联键把多张表接起来…',
-  '执行跨表计算与条件筛选…',
-  '逐行检查空值、重复主键和格式错误…',
+  '按关联键关联多张数据表…',
+  '执行跨表聚合与业务计算…',
+  '按日期区间与状态条件筛除记录…',
   '隔离异常行，输出标准表与异常清单…'
 ]
 
@@ -83,8 +96,8 @@ const tickText = computed(() => {
 })
 
 const progressText = computed(() => {
-  if (planning.value) return '智能体正在规划'
-  if (running.value) return '智能体正在执行'
+  if (planning.value) return '正在生成执行方案'
+  if (running.value) return '正在执行方案'
   return ''
 })
 
@@ -179,7 +192,7 @@ async function startScan() {
     anomalyTable.value = { columns: [], rows: [], total: 0, page: 1, size: 20 }
     saveSnapshot()
     loadRecent()
-    show(`扫描完成：${res.tables?.length || 0} 张表`)
+    show(`数据集扫描完成：识别 ${res.tables?.length || 0} 张表`)
   } catch (err) {
     error.value = err.message || '上传失败'
     show(error.value, 'err')
@@ -210,6 +223,141 @@ const statusTone = computed(() => {
   return 'idle'
 })
 
+/* ---------------- 左侧「操作步骤」状态条 ----------------
+ * 桥接模式的操作清单不是写死的六条：规划器排了几步，这里就按执行顺序列几项，
+ * 每项后面跟一句它具体做什么。用户在左侧即可看到这次要做的环节与进度。
+ */
+const BRIDGE_TOOLS = {
+  scan_dataset: { label: '扫描检索', hint: '找出数据集里的全部表格' },
+  parse_sheets: { label: '表格解析', hint: '读取表头、行数和示例内容' },
+  detect_kind: { label: '业务识别', hint: '判断表格属于人事、薪酬还是考勤' },
+  align_fields: { label: '字段对齐', hint: '把不同表格中含义相同的列对应起来' },
+  join_tables: { label: '跨表关联', hint: '按工号或姓名把多张表拼在一起' },
+  filter_rows: { label: '条件筛选', hint: '按日期、在职状态等条件保留记录' },
+  compute: { label: '业务计算', hint: '汇总合计并按公式算出新列' },
+  isolate_anomaly: { label: '异常隔离', hint: '把缺项、格式错误、对不上的记录单独列出' },
+  standardize_export: { label: '标准化导出', hint: '按目标系统的列顺序生成可导入文件' }
+}
+
+// 规划阶段真正会跑掉的原子能力：扫描、解析、业务识别、字段对齐。
+// 规划过程中只亮这四项，且逐个点亮；跨表关联、计算、异常隔离、导出要等用户确认执行，
+// 不能在规划阶段就全部点亮。
+const PLAN_PHASE_TOOLS = ['scan_dataset', 'parse_sheets', 'detect_kind', 'align_fields']
+const PLAN_STAGE_TOOLS = new Set(PLAN_PHASE_TOOLS)
+
+const railStateText = computed(() => {
+  if (scanning.value) return '扫描中'
+  if (planning.value) return '规划中'
+  if (running.value) return '执行中'
+  if (error.value) return '需处理'
+  if (result.value) return '已交付'
+  if (plan.value) return '待确认'
+  if (dataset.value) return '待下达目标'
+  return '待上传'
+})
+
+const railToneOf = computed(() => {
+  const text = railStateText.value
+  if (text === '已交付') return 'ok'
+  if (['扫描中', '规划中', '执行中'].includes(text)) return 'busy'
+  if (['待确认', '待下达目标', '需处理'].includes(text)) return 'wait'
+  return 'idle'
+})
+
+const railToolsOf = computed(() => {
+  // 规划进行中（含重新规划）：只按规划阶段的四项逐个点亮，每 2 秒推进一格，
+  // 走完就停在最后一项继续闪烁，不再往后亮，避免看起来“全部跑完”。
+  if (planning.value) {
+    const count = Math.min(PLAN_PHASE_TOOLS.length, 1 + Math.floor(elapsed.value / 2))
+    const finished = count >= PLAN_PHASE_TOOLS.length
+    const items = PLAN_PHASE_TOOLS.slice(0, count).map((key, index) => ({
+      key,
+      ...BRIDGE_TOOLS[key],
+      // 本项转圈；走到最后一项时四项都算完成，交给下面的「方案编排」继续转
+      state: finished || index < count - 1 ? 'done' : 'busy'
+    }))
+    // 四项都点亮之后才开始等模型编排，这时才出现「方案编排」，
+    // 不能提前排在清单里，否则看起来像跳步
+    if (finished) {
+      items.push({
+        key: 'planner',
+        label: '方案编排',
+        hint: '确定关联方式、计算规则与输出列',
+        state: 'busy'
+      })
+    }
+    return items
+  }
+  const steps = plan.value?.steps || []
+  if (!steps.length) return []
+  const executed = dataset.value?.status === 'done' || !!result.value
+  // 执行阶段只在真正的执行项上推进：每 1.2 秒点一格，当前项转圈，后面的保持未开始
+  const execTotal = steps.filter((step) => !PLAN_STAGE_TOOLS.has(step.tool)).length
+  const execLit = running.value ? Math.min(execTotal, 1 + Math.floor(elapsed.value / 1.2)) : 0
+  let execIndex = 0
+  return steps.map((step, index) => {
+    const meta = BRIDGE_TOOLS[step.tool] || { label: step.title || step.tool, hint: step.detail || '' }
+    const planningStage = PLAN_STAGE_TOOLS.has(step.tool)
+    let state = 'idle'
+    if (planningStage) {
+      // 这几项在规划阶段已经真跑过，直接算完成
+      state = 'done'
+    } else if (running.value) {
+      state = execIndex < execLit - 1 ? 'done' : execIndex === execLit - 1 ? 'busy' : 'idle'
+    } else if (executed) {
+      state = 'done'
+    }
+    if (!planningStage) execIndex += 1
+    return {
+      key: `${step.tool}-${index}`,
+      label: meta.label,
+      hint: step.detail || meta.hint,
+      state
+    }
+  })
+})
+
+// 状态下方的一句摘要：规划中说明正在编排什么，出方案后写清本次规模
+const railDetailOf = computed(() => {
+  if (planning.value) return '正在确定关联方式、计算规则、筛选条件与输出列'
+  const current = plan.value
+  if (current) {
+    const parts = []
+    const aligns = current.aligns?.length || 0
+    const computes = current.computes?.length || 0
+    const outputs = current.outputColumns?.length || 0
+    if (aligns) parts.push(`对齐 ${aligns} 个字段`)
+    if (computes) parts.push(`计算 ${computes} 列`)
+    if (outputs) parts.push(`输出 ${outputs} 列`)
+    return parts.join(' · ')
+  }
+  if (dataset.value) return `${dataset.value.tables?.length || 0} 张表已就绪，待下达业务目标`
+  return ''
+})
+
+// 进度、能力清单、方案摘要、规则条数一次性同步给导航栏
+function syncRail() {
+  if (railScope.value !== 'bridge') return
+  railState.value = railStateText.value
+  railTone.value = railToneOf.value
+  // 规划期间方案还没定型，不显示上一版方案的步数
+  railSteps.value = planning.value ? 0 : plan.value?.steps?.length || 0
+  railTools.value = railToolsOf.value
+  railDetail.value = railDetailOf.value
+  railMemory.value = rules.value.length
+}
+
+watch(
+  () => [railStateText.value, railToneOf.value, plan.value?.steps?.length, railToolsOf.value, railDetailOf.value, rules.value.length],
+  syncRail,
+  { immediate: true, deep: true }
+)
+
+// 导航栏点「管理」→ 打开自定义字段匹配规则
+watch(railMemoryRequest, (n) => {
+  if (n && railScope.value === 'bridge') rulesVisible.value = true
+})
+
 const canPlan = computed(() => !!dataset.value && instruction.value.trim().length > 0 && !planning.value && !running.value)
 
 async function planNow(silent = false) {
@@ -221,7 +369,7 @@ async function planNow(silent = false) {
     const res = await api.bridgePlan(dataset.value.id, instruction.value.trim())
     dataset.value = res
     saveSnapshot()
-    if (!silent) show('方案已经出来了，请核对后执行')
+    if (!silent) show('执行方案已生成，请核对字段映射与计算口径后再执行')
   } catch (err) {
     error.value = err.message || '规划失败'
     show(error.value, 'err')
@@ -298,7 +446,7 @@ async function changeAlign(row, field) {
   try {
     await api.bridgeAddRule(field, row.column)
     rules.value = await api.bridgeRules()
-    show(`已记住：${row.column} → ${fieldLabel(field)}，并按新规则重新规划`)
+    show(`已保存为自定义规则：${row.column} → ${fieldLabel(field)}，并按新规则重新规划`)
     await planNow(true)
   } catch (err) {
     show(err.message || '保存规则失败', 'err')
@@ -307,13 +455,13 @@ async function changeAlign(row, field) {
 
 async function addRule() {
   if (!ruleDraft.value.alias.trim()) {
-    show('先填一下原始列名', 'err')
+    show('请填写原始列名', 'err')
     return
   }
   try {
     rules.value = await api.bridgeAddRule(ruleDraft.value.standard, ruleDraft.value.alias.trim())
     ruleDraft.value.alias = ''
-    show('规则已保存，下次遇到这个列名会直接对齐')
+    show('规则已保存，下次遇到同一列名将直接套用')
   } catch (err) {
     show(err.message || '保存规则失败', 'err')
   }
@@ -337,8 +485,71 @@ async function loadRecent() {
   }
 }
 
+function toggleRecent() {
+  recentOpen.value = !recentOpen.value
+  if (recentOpen.value) {
+    recentChecked.value = []
+    loadRecent()
+  }
+}
+
+/* 最近记录里的勾选与清理：可以全清，也可以只清选中的几条 */
+const recentChecked = ref([])
+const recentBusy = ref(false)
+
+const allRecentChecked = computed(
+  () => recent.value.length > 0 && recentChecked.value.length === recent.value.length
+)
+
+function isRecentChecked(id) {
+  return recentChecked.value.includes(id)
+}
+
+function toggleRecentOne(id) {
+  const index = recentChecked.value.indexOf(id)
+  if (index >= 0) recentChecked.value.splice(index, 1)
+  else recentChecked.value.push(id)
+}
+
+function toggleRecentAll() {
+  recentChecked.value = allRecentChecked.value ? [] : recent.value.map((item) => item.id)
+}
+
+async function removeRecent(ids) {
+  if (recentBusy.value) return
+  const target = ids || []
+  const count = target.length ? target.length : recent.value.length
+  if (!count) return
+  const tip = target.length
+    ? `确定删除选中的 ${count} 条最近记录？对应源表与产出文件会一起清理。`
+    : `确定清空全部 ${count} 条最近记录？对应源表与产出文件会一起清理。`
+  if (!window.confirm(tip)) return
+  recentBusy.value = true
+  try {
+    const res = await api.bridgeDelete(target)
+    recent.value = res?.items || []
+    recentChecked.value = []
+    // 当前打开的数据集刚好被删掉时，页面不能继续显示已经不存在的数据
+    if (dataset.value?.id && (target.length ? target.includes(dataset.value.id) : true)) {
+      resetDataset()
+    }
+    show(`已删除 ${res?.deleted ?? count} 条最近记录`)
+  } catch (err) {
+    show(err.message || '删除失败', 'err')
+  } finally {
+    recentBusy.value = false
+    loadRecent()
+  }
+}
+
+// 弹层挂在卡片头部，点其他地方要能收起，否则会一直挡着上传区
+function onDocClick() {
+  recentOpen.value = false
+}
+
 async function openDataset(item) {
   if (!item?.id) return
+  recentOpen.value = false
   try {
     const res = await api.bridgeDataset(item.id)
     dataset.value = res
@@ -440,6 +651,8 @@ function rowsOf(table) {
 }
 
 onMounted(async () => {
+  railScope.value = 'bridge'
+  syncRail()
   try {
     standardFields.value = await api.bridgeStandardFields()
   } catch (e) {
@@ -448,11 +661,22 @@ onMounted(async () => {
   loadRecent()
   loadRules()
   restoreSnapshot()
+  document.addEventListener('click', onDocClick)
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick)
   stopTicker()
   saveSnapshot()
+  // 只有状态条还归桥接模式时才清空；已经切回标准模式的话，那边会自己重写
+  if (railScope.value === 'bridge') {
+    railTools.value = []
+    railSteps.value = 0
+    railDetail.value = ''
+    railMemory.value = 0
+    railState.value = '待交接'
+    railTone.value = 'idle'
+  }
 })
 
 async function loadRules() {
@@ -471,10 +695,74 @@ async function loadRules() {
       <header class="bg-card-head">
         <div>
           <span class="bg-kicker">跨系统表格桥接</span>
-          <h2>把整个数据集交上来，不用挑表</h2>
-          <p>一个压缩包，或者直接选一整个文件夹。智能体自己找表、理解表、对齐字段，你只需要说清业务目标。</p>
+          <h2>提交整个数据集，无需指定文件名</h2>
+          <p>上传一个压缩包，或直接选择整个导出目录。智能体自行定位数据表、判定业务归属并对齐字段，用户只需说明业务目标。</p>
         </div>
-        <span class="bg-core">核心能力</span>
+        <!-- 最近记录：图标放在「核心能力」左边，悬浮提示、点击展开 -->
+        <div class="bg-head-side">
+          <button
+            class="bg-recent-btn"
+            type="button"
+            title="最近记录"
+            aria-label="最近记录"
+            @click.stop="toggleRecent"
+          >
+            <Icon name="history" :size="14" />
+          </button>
+          <span class="bg-core">核心能力</span>
+
+          <div v-if="recentOpen" class="bg-recent-pop" @click.stop>
+            <div class="bg-recent-pop-head">
+              <b>最近记录</b>
+              <span>{{ recent.length }} 个数据集</span>
+            </div>
+            <div v-if="recent.length" class="bg-recent-pop-list">
+              <label class="bg-recent-row is-head">
+                <input type="checkbox" :checked="allRecentChecked" @change="toggleRecentAll" />
+                <span>全选</span>
+              </label>
+              <label
+                v-for="item in recent"
+                :key="item.id"
+                class="bg-recent-row"
+                :class="{ 'is-on': isRecentChecked(item.id) }"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isRecentChecked(item.id)"
+                  @change="toggleRecentOne(item.id)"
+                />
+                <span class="bg-recent-main" @click.stop="openDataset(item)">
+                  <b :title="item.name">{{ item.name }}</b>
+                  <i>
+                    {{ item.created_at }} · {{ item.tables?.length || 0 }} 张表 ·
+                    {{ item.instruction ? '已规划' : '未规划' }}
+                  </i>
+                </span>
+              </label>
+            </div>
+            <p v-else class="bg-recent-empty">还没有记录，扫描一个数据集后会出现在这里。</p>
+            <div v-if="recent.length" class="bg-recent-pop-foot">
+              <span class="bg-recent-sel">已选 {{ recentChecked.length }} / {{ recent.length }}</span>
+              <button
+                type="button"
+                class="bg-recent-act"
+                :disabled="recentBusy || !recentChecked.length"
+                @click="removeRecent(recentChecked.slice())"
+              >
+                删除所选
+              </button>
+              <button
+                type="button"
+                class="bg-recent-act is-danger"
+                :disabled="recentBusy"
+                @click="removeRecent([])"
+              >
+                清空全部
+              </button>
+            </div>
+          </div>
+        </div>
       </header>
 
       <div class="bg-card-body">
@@ -492,15 +780,15 @@ async function loadRules() {
           >
             <div class="bg-drop-inner">
               <span class="bg-drop-icon"><Icon name="database" :size="20" /></span>
-              <b>拖入压缩包 / Excel</b>
-              <span>支持 .zip / .xlsx / .xls / .csv，可一次放多个</span>
+              <b>拖入压缩包或表格文件</b>
+              <span>支持 .zip / .xlsx / .xls / .csv，可一次提交多个</span>
             </div>
           </el-upload>
 
           <button class="bg-folder" type="button" :disabled="scanning" @click="folderInput?.click()">
             <span class="bg-drop-icon"><Icon name="folder" :size="20" /></span>
-            <b>选择一个文件夹</b>
-            <span>把整个导出目录直接交给智能体</span>
+            <b>选择整个文件夹</b>
+            <span>将整个导出目录一并提交</span>
           </button>
           <input
             ref="folderInput"
@@ -540,24 +828,16 @@ async function loadRules() {
 
         <p v-if="error" class="bg-error">{{ error }}</p>
 
-        <div v-if="recent.length" class="bg-recent">
-          <span class="bg-label">最近的数据集</span>
-          <ul>
-            <li v-for="item in recent.slice(0, 4)" :key="item.id" @click="openDataset(item)">
-              <b>{{ item.name }}</b>
-              <span>{{ item.created_at }} · {{ item.tables?.length || 0 }} 张表 · {{ item.instruction ? '已规划' : '未规划' }}</span>
-            </li>
-          </ul>
-        </div>
-
         <div class="bg-tips">
-          <b>它按这五步干活</b>
+          <b>执行流程</b>
           <ol>
-            <li>扫描数据集，给每张表安一个业务身份</li>
-            <li>解析表头与样例值，把不同系统的同义字段对齐到标准字段</li>
-            <li>按业务目标做跨表关联、计算和筛选</li>
-            <li>识别空值、重复主键、对不上的行，单独出异常清单</li>
-            <li>按目标系统的列顺序输出标准表，可直接导入</li>
+            <li>扫描检索：遍历数据集目录，按文件名与表头判定每张表的业务归属</li>
+            <li>表格解析：读取各表的表头、行数与样例值，缓存表结构供后续复用</li>
+            <li>字段对齐：将各系统中含义相同、命名不同的字段对齐到统一标准字段，并支持自定义规则</li>
+            <li>自主规划：规划器按业务目标编排子任务，给出关联键、计算口径、筛选条件、异常检查与输出列</li>
+            <li>人工核对：方案与字段映射交由用户核对，修正后的映射可直接保存为可复用规则</li>
+            <li>跨表执行：按关联键关联多表，执行聚合与加减计算、条件筛选，命中检查规则的行单独隔离</li>
+            <li>标准化交付：按目标系统的列顺序与日期格式输出标准表，同时生成异常清单</li>
           </ol>
         </div>
       </div>
@@ -616,8 +896,8 @@ async function loadRules() {
         <header class="bg-card-head">
           <div>
             <span class="bg-kicker">业务目标</span>
-            <h2>用一句话说清这单要做什么</h2>
-            <p>不用写文件名，也不用写字段名。它自己会去找哪张表、哪两列是一回事。</p>
+            <h2>以自然语言描述本次桥接目标</h2>
+            <p>无需指定文件名与列名。智能体自行定位数据表，并判定不同系统间含义相同的字段。</p>
           </div>
         </header>
         <div class="bg-card-body">
@@ -631,7 +911,7 @@ async function loadRules() {
             placeholder="例如：把 HR 入职表和 ERP 薪资表做桥接，计算每个员工应发工资，过滤掉入职信息缺失的异常人员，输出符合 OA 导入标准的表格"
           />
           <div class="bg-samples">
-            <span class="bg-label">试试</span>
+            <span class="bg-label">示例指令</span>
             <button
               v-for="text in EXAMPLES"
               :key="text"
@@ -646,7 +926,7 @@ async function loadRules() {
 
           <div class="bg-actions">
             <span class="bg-hint">
-              {{ plan ? '方案已生成，改完目标可以重新规划' : '智能体不会直接跑，先出方案给你核对' }}
+              {{ plan ? '方案已生成；修改业务目标后可重新规划' : '智能体先输出方案，经核对确认后才执行' }}
             </span>
             <button class="bg-primary" :disabled="!canPlan" @click="planNow(false)">
               <Icon name="spark" :size="14" />
@@ -793,7 +1073,7 @@ async function loadRules() {
 
           <div class="bg-run">
             <span class="bg-hint">
-              {{ dataset.status === 'done' ? '已经执行过一次，可以按当前方案重跑' : '方案经用户确认后才会执行，不会自动改动数据' }}
+              {{ dataset.status === 'done' ? '已执行过一次，可按当前方案重新执行' : '方案经用户确认后才会执行，不会自动改动原始数据' }}
             </span>
             <button class="bg-primary bg-primary-lg" :disabled="!canRun" @click="runNow">
               <Icon name="play" :size="14" />
@@ -1010,6 +1290,187 @@ async function loadRules() {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* 「核心能力」左侧的最近记录入口：图标按钮 + 下拉记录 */
+.bg-head-side {
+  position: relative;
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+}
+
+.bg-recent-btn {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid var(--bg-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--bg-ink-3);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.bg-recent-btn:hover {
+  border-color: #c9d8f8;
+  background: var(--bg-blue-soft);
+  color: var(--bg-blue);
+}
+
+.bg-recent-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  /* 弹层自身不再无限长高：头部和底栏固定，只有列表滚动 */
+  max-height: 320px;
+  background: #fff;
+  border: 1px solid var(--bg-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgb(20 30 50 / 12%);
+  overflow: hidden;
+}
+
+.bg-recent-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex: none;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--bg-line);
+  color: var(--bg-ink-3);
+  font-size: 11px;
+}
+
+.bg-recent-pop-head b {
+  color: var(--bg-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 列表区独立滚动，条目再多也不会把弹层撑出屏幕 */
+.bg-recent-pop-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 232px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.bg-recent-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bg-recent-row:hover {
+  background: #f6f8fb;
+}
+
+.bg-recent-row.is-on {
+  background: var(--bg-blue-soft);
+}
+
+.bg-recent-row.is-head {
+  padding: 4px 6px;
+  color: var(--bg-ink-3);
+  font-size: 11px;
+}
+
+.bg-recent-row input[type='checkbox'] {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--bg-blue);
+  cursor: pointer;
+}
+
+.bg-recent-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.bg-recent-main b {
+  overflow: hidden;
+  color: var(--bg-ink);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bg-recent-main i {
+  overflow: hidden;
+  color: var(--bg-ink-3);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bg-recent-pop-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: none;
+  padding: 8px 10px;
+  border-top: 1px solid var(--bg-line);
+  background: #fbfcfd;
+}
+
+.bg-recent-sel {
+  flex: 1 1 auto;
+  color: var(--bg-ink-3);
+  font-size: 11px;
+}
+
+.bg-recent-act {
+  padding: 4px 9px;
+  border: 1px solid var(--bg-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--bg-ink-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.bg-recent-act:hover:not(:disabled) {
+  border-color: #c9d8f8;
+  color: var(--bg-blue);
+}
+
+.bg-recent-act.is-danger:hover:not(:disabled) {
+  border-color: #f0c2c2;
+  color: #c0392b;
+}
+
+.bg-recent-act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bg-recent-empty {
+  margin: 0;
+  padding: 14px 12px;
+  color: var(--bg-ink-3);
+  font-size: 11.5px;
+  line-height: 1.7;
 }
 
 .bg-head-tools {
@@ -1274,49 +1735,6 @@ async function loadRules() {
   color: var(--bg-ink-3);
   font-size: 11.5px;
   line-height: 1.6;
-}
-
-.bg-recent {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--bg-line-soft);
-}
-
-.bg-recent ul {
-  display: grid;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 0;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  list-style: none;
-}
-
-.bg-recent li {
-  padding: 9px 11px;
-  border: 1px solid var(--bg-line);
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  transition: border-color 0.16s ease, background 0.16s ease;
-}
-
-.bg-recent li:hover {
-  border-color: #c5d3ee;
-  background: #f8faff;
-}
-
-.bg-recent li b {
-  display: block;
-  overflow: hidden;
-  color: var(--bg-ink);
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bg-recent li span {
-  color: var(--bg-ink-3);
-  font-size: 11px;
 }
 
 .bg-tips {

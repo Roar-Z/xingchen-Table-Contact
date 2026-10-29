@@ -19,6 +19,7 @@ import org.springframework.web.util.UriUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -40,14 +41,34 @@ public class SheetController {
         return sheets.list(keyword);
     }
 
+    /** 仓库列表分页：page 从 1 开始，page_size 默认 10（前端一页 10 张）。 */
+    @GetMapping("/page")
+    public Map<String, Object> page(@RequestParam(value = "page", defaultValue = "1") int page,
+                                    @RequestParam(value = "page_size", defaultValue = "10") int pageSize,
+                                    @RequestParam(value = "q", required = false) String keyword) {
+        return sheets.page(keyword, page, pageSize);
+    }
+
     @GetMapping("/templates")
     public List<Map<String, Object>> templates() {
         return sheets.templates();
     }
 
     @GetMapping("/logs")
-    public List<Map<String, Object>> logs(@RequestParam(value = "limit", defaultValue = "60") int limit) {
-        return sheets.recentLogs(Math.max(1, Math.min(limit, 300)));
+    public Map<String, Object> logs(@RequestParam(value = "page", defaultValue = "1") int page,
+                                    @RequestParam(value = "page_size", defaultValue = "10") int pageSize) {
+        return sheets.logs(page, pageSize);
+    }
+
+    /**
+     * 删日志：ids 传了就只删这几条，传空数组就是清空全部。
+     */
+    @PostMapping("/logs/delete")
+    public Map<String, Object> deleteLogs(@RequestBody(required = false) Map<String, Object> body) {
+        List<String> ids = body != null && body.get("ids") instanceof List<?> list
+                ? list.stream().map(String::valueOf).toList()
+                : List.of();
+        return sheets.deleteLogs(ids);
     }
 
     @GetMapping("/{id}")
@@ -150,5 +171,19 @@ public class SheetController {
     public Map<String, Object> delete(@PathVariable("id") String id) {
         sheets.delete(id);
         return Map.of("deleted", id);
+    }
+
+    /** 批量删除：body {"ids":[...]}，仓库列表勾选多张后一次删掉 */
+    @PostMapping("/delete")
+    public Map<String, Object> deleteMany(@RequestBody(required = false) Map<String, Object> body) {
+        List<String> ids = new ArrayList<>();
+        if (body != null && body.get("ids") instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) {
+                    ids.add(String.valueOf(item));
+                }
+            }
+        }
+        return sheets.deleteMany(ids);
     }
 }

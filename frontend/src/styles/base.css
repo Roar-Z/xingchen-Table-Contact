@@ -171,12 +171,19 @@ button:disabled {
   background: var(--danger);
 }
 
-/* 侧边栏底部：连接状态 + 文档入口 + 版本 */
+/* 侧边栏底部：连接状态在左，设置齿轮贴最右 */
+.foot-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .foot-links {
+  position: relative;
   display: flex;
   gap: 2px;
   align-items: center;
-  margin-top: 2px;
 }
 
 /* 只放图标，文字改成悬浮提示，省出侧边栏宽度 */
@@ -219,6 +226,57 @@ button:disabled {
 .foot-link:hover::after {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
+}
+
+/* 齿轮是个按钮，去掉浏览器默认的边框和底色，外观和图标入口保持一致 */
+.foot-link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.foot-link.is-open {
+  background: #f2f3f5;
+  color: var(--accent);
+}
+
+/* 设置菜单从齿轮上方展开、右边对齐，展开时不挤压底部这行 */
+.foot-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 172px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 10px 26px rgba(31, 35, 41, 0.14);
+}
+
+.foot-menu-head {
+  padding: 4px 8px 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.foot-menu-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 5px;
+  color: var(--ink-2);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.foot-menu-item:hover {
+  background: #f4f6f9;
+  color: var(--accent);
 }
 
 .foot-version {

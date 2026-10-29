@@ -5,6 +5,7 @@ import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
 import StatusPill from '../components/StatusPill.vue'
 import { api, isNetworkError } from '../api'
+import { clearNotice, showNotice } from '../appNotice'
 import { useToast } from '../toast'
 
 const route = useRoute()
@@ -160,12 +161,14 @@ async function load(initial = false) {
     const data = await api.task(taskId.value)
     task.value = data
     error.value = ''
+    clearNotice()
     if (['queued', 'running'].includes(data.status)) schedule()
     else stopPolling()
   } catch (err) {
     error.value = isNetworkError(err)
-      ? '后端没有连上，先在 backend 目录运行 start.cmd，再刷新页面。'
+      ? '暂时连不上服务，请稍后刷新页面重试。'
       : err.message
+    showNotice(error.value, () => load())
     stopPolling()
   } finally {
     if (initial) loading.value = false
@@ -345,10 +348,7 @@ onUnmounted(stopPolling)
         </div>
       </div>
 
-      <div v-if="error" class="banner banner-err">
-        {{ error }}
-        <button class="btn btn-sm" @click="load(true)">重试</button>
-      </div>
+      <!-- 报错统一显示在顶栏下方那条全局提示里 -->
 
       <template v-if="task">
         <section v-if="running" class="panel">

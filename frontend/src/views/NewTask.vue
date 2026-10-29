@@ -29,10 +29,12 @@ import 'element-plus/dist/index.css'
 import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
 import BridgeAgent from '../components/BridgeAgent.vue'
-import { api, apiState } from '../api'
+import { api } from '../api'
 import {
+  railDetail,
   railMemory,
   railMemoryRequest,
+  railScope,
   railState,
   railSteps,
   railTools,
@@ -51,26 +53,27 @@ const { show } = useToast()
 // 页面标题和说明统一放到顶栏，页面正文不再重复一遍
 const TOPBAR = {
   title: '智能体工作台',
-  desc: '把源表、目标模板和一句话目标交给智能体，它会自己读表、查记忆、规划映射，你只需要核对方案。'
+  desc: '提交源表、目标模板和一句话目标，系统读取表结构、检索历史配置并生成字段映射方案，用户核对后执行。'
 }
 
 /*
  * 两种工作模式：
  * standard —— 源表 + 目标模板，逐列核对，适合明确的转换任务；
  * agent    —— 上传整个数据集（zip / 文件夹），一句话业务目标，智能体自己找表、对齐、计算、导出。
- * 模式记在 sessionStorage 里，刷新页面还停在原来那一页。
+ * 默认进入智能体模式；模式记在 sessionStorage 里，刷新页面还停在原来那一页。
  */
-const MODE_KEY = 'huibiao.mode.v1'
-const workspaceMode = ref('standard')
+const MODE_KEY = 'huibiao.mode.v2'
+const workspaceMode = ref('agent')
 try {
-  if (sessionStorage.getItem(MODE_KEY) === 'agent') workspaceMode.value = 'agent'
+  const saved = sessionStorage.getItem(MODE_KEY)
+  if (saved === 'standard' || saved === 'agent') workspaceMode.value = saved
 } catch (e) {
   // 隐私模式下 sessionStorage 不可用，用默认模式即可
 }
 
 const TOPBAR_AGENT = {
   title: '智能体工作台 · 跨系统桥接',
-  desc: '整个数据集（压缩包或文件夹）交上来，说一句业务目标，智能体自己找表、对齐字段、跨表计算，输出标准表和异常清单。'
+  desc: '提交压缩包或整个文件夹并说明业务目标，智能体自动定位数据表、对齐字段、执行跨表计算，输出标准表与异常清单。'
 }
 
 // 模式切换放在顶栏右侧，页面顶部不再占一整条
@@ -84,7 +87,7 @@ const MODE_SEGMENTS = [
     key: 'agent',
     label: '智能体模式',
     badge: '核心',
-    hint: '上传压缩包或文件夹，说一句业务目标，自己找表、对齐字段、出标准表'
+    hint: '提交压缩包或文件夹并说明业务目标，智能体自主定位数据表、对齐字段、生成标准表'
   }
 ]
 
@@ -104,7 +107,20 @@ function switchMode(mode) {
     // 同上
   }
   mountTopbar()
-  railVisible.value = mode !== 'agent'
+  // 两种模式都显示左侧状态条，只是内容不同：桥接模式交代的是原子能力，
+  // 标准模式交代的是读表、校验映射这些转换动作
+  railVisible.value = true
+  railScope.value = mode === 'agent' ? 'bridge' : 'standard'
+  if (mode === 'agent') {
+    // 切过去时先清空，等 BridgeAgent 挂载后自己按数据集状态填
+    railTools.value = []
+    railSteps.value = 0
+    railDetail.value = ''
+    railState.value = '待上传'
+    railTone.value = 'idle'
+  } else {
+    syncRail()
+  }
 }
 
 // 首次渲染就要把标题和模式切换挂上去，不能等 onMounted
@@ -360,12 +376,12 @@ function revealCountOf(elapsed) {
 // 导航栏里只展示“这一轮要用到的能力”，不堆术语
 const agentRailTools = computed(() => {
   const all = [
-    { key: 'inspect_sources', label: '读表', hint: '表头 / 行数 / 样例' },
-    { key: 'detect_intent', label: '理解目标', hint: '场景与业务口径' },
-    { key: 'recall_experience', label: '查记忆', hint: '复用跑过的配置' },
-    { key: 'validate_mapping', label: '校验映射', hint: '必填 / 表达式合法性' },
-    { key: 'auto_fix', label: '自动补全', hint: '拼接与换算' },
-    { key: 'handoff_human', label: '用户确认', hint: '方案经用户确认后执行' }
+    { key: 'inspect_sources', label: '读取源表', hint: '看列名、行数和示例数据' },
+    { key: 'detect_intent', label: '理解目标', hint: '明确要做哪种转换' },
+    { key: 'recall_experience', label: '查找历史方案', hint: '复用以前确认过的配置' },
+    { key: 'validate_mapping', label: '校验字段映射', hint: '检查列对应关系与必填项' },
+    { key: 'auto_fix', label: '自动补全', hint: '补齐缺失值、统一格式' },
+    { key: 'handoff_human', label: '用户确认', hint: '确认方案后才执行' }
   ]
   // 还没开始规划时一条都不列，等真的跑起来再逐条出现
   if (!agentSteps.value.length) {
@@ -1399,27 +1415,32 @@ async function removeScheme() {
 }
 
 /* 把这一页的智能体进度同步到左侧导航栏；离开这一页就收起，不把上一单的状态带出去 */
+function syncRail() {
+  if (workspaceMode.value === 'agent') return
+  railState.value = agentStateText.value
+  railTone.value = agentStateTone.value
+  railSteps.value = agentSteps.value.length
+  railTools.value = agentRailTools.value
+  railDetail.value = ''
+  railMemory.value = agentExperiences.value.length
+}
+
 watch(
   () => [
     agentStateText.value,
     agentStateTone.value,
     agentSteps.value.length,
     agentRailTools.value,
-    agentExperiences.value.length
+    agentExperiences.value.length,
+    workspaceMode.value
   ],
-  () => {
-    railState.value = agentStateText.value
-    railTone.value = agentStateTone.value
-    railSteps.value = agentSteps.value.length
-    railTools.value = agentRailTools.value
-    railMemory.value = agentExperiences.value.length
-  },
+  syncRail,
   { immediate: true, deep: true }
 )
 
-// 导航栏里点「管理」→ 打开这一页的经验记忆弹窗
+// 导航栏里点「管理」→ 打开这一页的经验记忆弹窗；桥接模式下这个按钮归 BridgeAgent 管
 watch(railMemoryRequest, (n) => {
-  if (n) memoryVisible.value = true
+  if (n && workspaceMode.value !== 'agent') memoryVisible.value = true
 })
 
 /* ---------- 断点续看：刷新 / 直接输地址后，回到工作台还能接着看 ----------
@@ -1523,8 +1544,9 @@ watch(
 onMounted(() => {
   restoreSnapshot()
   mountTopbar()
-  // 智能体模式不需要“待交接/等待核对”这条状态轨，右侧留给区块本身
-  railVisible.value = workspaceMode.value !== 'agent'
+  // 两种模式都保留左侧状态条：桥接模式显示本次调用的原子能力，标准模式显示转换动作
+  railVisible.value = true
+  railScope.value = workspaceMode.value === 'agent' ? 'bridge' : 'standard'
   loadSchemes()
   loadAgentExperience()
 })
@@ -1534,7 +1556,8 @@ onMounted(() => {
 // 中间的轮询继续跑，任务跑完了切回来能直接看到结果。
 onActivated(() => {
   mountTopbar()
-  railVisible.value = workspaceMode.value !== 'agent'
+  railVisible.value = true
+  railScope.value = workspaceMode.value === 'agent' ? 'bridge' : 'standard'
 })
 
 onDeactivated(() => {
@@ -1756,9 +1779,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page agentdesk">
-    <div v-if="apiState.online === false" class="banner banner-err">
-      后端没有连上，文件解析和任务执行都不可用。先在 backend 目录运行 start.cmd，再刷新页面。
-    </div>
+    <!-- 连不上服务的提示统一在顶栏下方那条全局提示里，正文不再单独摆一条 -->
 
     <!-- 模式切换在顶栏右侧；窄屏顶栏是隐藏的，这里兜个底 -->
     <div class="ad-mode-line">

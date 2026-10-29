@@ -3,6 +3,7 @@ package com.xingchen.huibiao.service.governance;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
 import com.xingchen.huibiao.util.TimeUtils;
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,8 +31,10 @@ import java.util.Map;
 public class AuditLog {
 
     private static final Logger log = LoggerFactory.getLogger(AuditLog.class);
-    private static final int MAX_READ = 200;
-    private static final long MAX_BYTES = 4L * 1024 * 1024;
+    /** 只保留最近 100 条审计记录，超出后丢最旧的；单页最多取 50 条。 */
+    static final int MAX_ENTRIES = 100;
+    private static final int MAX_READ = MAX_ENTRIES;
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final DataPaths paths;
     private final ObjectMapper mapper;
@@ -39,6 +42,20 @@ public class AuditLog {
     public AuditLog(DataPaths paths, ObjectMapper mapper) {
         this.paths = paths;
         this.mapper = mapper;
+    }
+
+    /** 启动时把历史遗留的超长日志收敛到上限，避免旧文件一直超出 100 条。 */
+    @PostConstruct
+    public void init() {
+        Path file = paths.auditLogFile();
+        if (!Files.isRegularFile(file)) {
+            return;
+        }
+        try {
+            trim(file);
+        } catch (IOException e) {
+            log.warn("审计日志收敛失败：{}", e.getMessage());
+        }
     }
 
     public void record(String action, String target, String detail) {
@@ -64,6 +81,35 @@ public class AuditLog {
 
     public List<Map<String, Object>> recent(int limit) {
         int size = Math.min(Math.max(limit, 1), MAX_READ);
+        List<Map<String, Object>> all = readAll();
+        return new ArrayList<>(all.subList(0, Math.min(size, all.size())));
+    }
+
+    /**
+     * 审计日志分页：新的在前，返回 items / total / page / pages。
+     * 只读当前页，不把整个文件返回给前端。
+     */
+    public Map<String, Object> page(int page, int pageSize) {
+        int size = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
+        List<Map<String, Object>> all = readAll();
+        int total = all.size();
+        int pages = total == 0 ? 1 : (int) Math.ceil(total * 1.0 / size);
+        int current = Math.min(Math.max(page, 1), pages);
+        int from = Math.min((current - 1) * size, total);
+        int to = Math.min(from + size, total);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", new ArrayList<>(all.subList(from, to)));
+        out.put("total", total);
+        out.put("page", current);
+        out.put("page_size", size);
+        out.put("pages", pages);
+        out.put("keep", MAX_ENTRIES);
+        return out;
+    }
+
+    /** 从新到旧读出全部留存记录；单行损坏跳过，不影响整体查询。 */
+    private List<Map<String, Object>> readAll() {
         Path file = paths.auditLogFile();
         if (!Files.isRegularFile(file)) {
             return List.of();
@@ -71,7 +117,7 @@ public class AuditLog {
         try {
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             List<Map<String, Object>> out = new ArrayList<>();
-            for (int i = lines.size() - 1; i >= 0 && out.size() < size; i--) {
+            for (int i = lines.size() - 1; i >= 0 && out.size() < MAX_READ; i--) {
                 String line = lines.get(i);
                 if (line == null || line.isBlank()) {
                     continue;
@@ -102,14 +148,19 @@ public class AuditLog {
         }
     }
 
-    /** 文件过大时只保留最近 2000 行，避免长期运行把磁盘写满。 */
+    /** 每次追加后把文件收敛到最近 MAX_ENTRIES 条，避免长期运行无限增长。 */
     private void trim(Path file) throws IOException {
-        if (Files.size(file) <= MAX_BYTES) {
+        List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        List<String> kept = new ArrayList<>();
+        for (String line : lines) {
+            if (line != null && !line.isBlank()) {
+                kept.add(line);
+            }
+        }
+        if (kept.size() <= MAX_ENTRIES) {
             return;
         }
-        List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-        int keep = Math.min(lines.size(), 2000);
-        List<String> tail = lines.subList(lines.size() - keep, lines.size());
+        List<String> tail = kept.subList(kept.size() - MAX_ENTRIES, kept.size());
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         Files.write(tmp, tail, StandardCharsets.UTF_8);
         Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);

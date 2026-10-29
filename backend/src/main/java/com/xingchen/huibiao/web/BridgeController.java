@@ -23,6 +23,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,32 @@ public class BridgeController {
 
     @GetMapping("/datasets")
     public List<BridgeDataset> recent() {
+        return agents.recent();
+    }
+
+    /**
+     * 清理最近记录：body 里给 ids 就删这几条，不给（或空数组）就清空全部。
+     * 返回删除条数和剩余列表，前端直接拿剩余列表刷新，不用再查一次。
+     */
+    @PostMapping("/datasets/delete")
+    public Map<String, Object> delete(@RequestBody(required = false) Map<String, Object> body) {
+        List<String> ids = new ArrayList<>();
+        Object raw = body == null ? null : body.get("ids");
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) ids.add(String.valueOf(item));
+            }
+        }
+        int deleted = store.delete(ids);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", deleted);
+        out.put("items", agents.recent());
+        return out;
+    }
+
+    @DeleteMapping("/datasets/{id}")
+    public List<BridgeDataset> deleteOne(@PathVariable("id") String id) {
+        store.deleteOne(id);
         return agents.recent();
     }
 

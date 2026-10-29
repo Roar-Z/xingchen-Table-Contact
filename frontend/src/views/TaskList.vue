@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import StatusPill from '../components/StatusPill.vue'
 import { api, isNetworkError } from '../api'
+import { clearNotice, showNotice } from '../appNotice'
 import { useToast } from '../toast'
 
 const router = useRouter()
@@ -73,11 +74,14 @@ async function load() {
     })
     const visible = new Set((data.value?.items || []).map((item) => item.id))
     selected.value = selected.value.filter((id) => visible.has(id))
+    clearNotice()
   } catch (err) {
     error.value = isNetworkError(err)
-      ? '后端没有连上，先在 backend 目录运行 start.cmd，再刷新页面。'
+      ? '暂时连不上服务，请稍后刷新页面重试。'
       : err.message
     data.value = null
+    // 统一显示在顶栏下方的全局提示里，正文不单独摆红带
+    showNotice(error.value, () => load())
   } finally {
     loading.value = false
   }
@@ -221,10 +225,7 @@ onMounted(load)
       </form>
     </div>
 
-    <div v-if="error" class="banner banner-err">
-      {{ error }}
-      <button class="btn btn-sm" @click="load">重试</button>
-    </div>
+    <!-- 报错统一显示在顶栏下方那条全局提示里 -->
 
     <div v-if="selected.length" class="bulk-bar">
       <span>已选 {{ selected.length }} 项</span>
@@ -237,7 +238,18 @@ onMounted(load)
 
     <section class="panel">
       <div class="panel-body flush">
-        <div v-if="loading && !items.length" class="empty">正在加载任务…</div>
+        <!-- 首次加载用表格骨架占位：不给一整块空白，数据回来后行高不跳 -->
+        <div v-if="loading && !items.length" class="sk-table" aria-busy="true">
+          <div v-for="n in 6" :key="n" class="sk-row">
+            <span class="sk-cell" style="width: 22%"></span>
+            <span class="sk-cell" style="width: 10%"></span>
+            <span class="sk-cell" style="width: 16%"></span>
+            <span class="sk-cell" style="width: 9%"></span>
+            <span class="sk-cell" style="width: 12%"></span>
+            <span class="sk-cell" style="width: 15%"></span>
+          </div>
+          <p class="sk-text">正在加载任务…</p>
+        </div>
 
         <div v-else-if="!items.length" class="empty">
           <span class="empty-icon"><Icon name="history" :size="18" /></span>
@@ -339,3 +351,44 @@ onMounted(load)
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 任务列表首次加载骨架：每行与真实表格同高，避免从空白块跳成表格 */
+.sk-table {
+  padding: 14px 16px 18px;
+}
+
+.sk-row {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  height: 54px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--line-soft, #eef1f5);
+}
+
+.sk-cell {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef1f6 25%, #f8fafc 45%, #eef1f6 65%);
+  background-size: 400% 100%;
+  animation: sk-sweep 1.5s ease-in-out infinite;
+}
+
+.sk-text {
+  margin: 14px 0 0;
+  color: var(--muted, #7a869a);
+  font-size: 12px;
+  text-align: center;
+}
+
+@keyframes sk-sweep {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+</style>

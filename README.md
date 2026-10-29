@@ -37,7 +37,7 @@ Xingchen Huibiao · Cross-system Spreadsheet Bridge Agent
 
 ## 智能体模式（核心）
 
-新建任务页最上面有「标准模式 / 智能体模式」两档，默认是标准模式。切到智能体模式以后，交互只剩下三步：
+新建任务页顶栏右侧有「标准模式 / 智能体模式」两档，默认进入智能体模式。智能体模式的交互只有三步：
 
 1. 把一个压缩包（或整个文件夹里的表格）丢进来；
 2. 用一句业务目标说清这单要做什么，不用写文件名，也不用写字段名；
@@ -60,6 +60,8 @@ Xingchen Huibiao · Cross-system Spreadsheet Bridge Agent
 - **同类表有多张**（OA 导出的请假单和 HR 导入的请假模板）：每类只用字段最全的一张，另一张标成「备选表」，并在方案里写清楚。
 
 字段对齐结果可以直接在页面上改，改一次就存成自定义规则（`data/bridge/rules.json`），下次遇到同一个列名自动复用，新增报表也能接。数据集现场存在 `data/bridge/datasets/{id}/meta.json`，规划方案、执行轨迹、结果统计都在里面，换台机器拷整个 `data` 目录就能接着看。
+
+切到智能体模式后，左侧导航栏的「操作步骤」卡片（模式标签为高亮的「智能体」，标准模式显示「半自动」）同步承接这一单的进度：上排是当前状态（待上传 / 待下达目标 / 规划中 / 待确认 / 执行中 / 已交付 / 需处理），下面一句话说明本次方案规模（对齐多少字段、算几列、输出几列），中间按规划器实际排出的顺序逐条列出原子能力——规划阶段真正跑过的扫描、解析、识别、对齐标为完成，跨表关联、计算、异常隔离与导出在执行前留白，下排是「N 步」和本单可用自定义规则的条数，点「管理」直接打开字段匹配规则。
 
 接口：
 
@@ -121,12 +123,12 @@ GET    /api/bridge/standard-fields         标准字段清单
 | 工具注册表 | 直接反射 `@Tool` 注解，确保“文档里写的工具”和“模型能调的工具”一致 |
 | 审计日志 | 生成方案、创建任务、确认执行、重跑、一句话改结果、撤销、删除，全部落盘 |
 
-- 运行记录写入 `data/agent-runs.json`，保留最近 300 次，分页统计不读全量历史；
-- 审计写入 `data/audit.log.jsonl`，只追加不改写，超过 4 MB 自动裁剪到最近 2000 行；
+- 运行记录写入 `data/agent-runs.json`，**本地最多保留 100 条**，超出丢最旧；「最近运行」按页查询（`/api/ops/runs?page=&page_size=`）；
+- 审计写入 `data/audit.log.jsonl`，只追加不改写，**同样最多保留 100 条**，启动与每次追加后都会收敛，按页查询（`/api/ops/audit?page=&page_size=`）；
 - 没有账号体系时，操作人取请求头 `X-Operator`，缺省记来源地址；以后接统一身份，只需让网关注入该头，日志格式不用改；
 - token 由 LangChain4j 的 `ChatModelListener` 在每次模型响应时累加，供应商未上报时记 0，不编造数字。
 
-接口为 `GET /api/ops/stats`、`GET /api/ops/tools`、`GET /api/ops/self-check`、`GET /api/ops/audit?limit=40`；相关代码在 `service/governance/`（`TokenMeter`、`AgentRunStore`、`AuditLog`）和 `web/OpsController.java`。
+接口为 `GET /api/ops/stats`、`GET /api/ops/tools`、`GET /api/ops/self-check`、`GET /api/ops/runs?page=&page_size=`、`GET /api/ops/audit?page=&page_size=`；相关代码在 `service/governance/`（`TokenMeter`、`AgentRunStore`、`AuditLog`）和 `web/OpsController.java`。
 
 ## 结果表分页与查询
 
@@ -239,7 +241,7 @@ cd backend
 
 ```powershell
 cd backend
-java -jar target/huibiao-backend-0.8.2.jar
+java -jar target/huibiao-backend-1.0.0.jar
 ```
 
 浏览器打开 <http://127.0.0.1:8000>。前端已构建在 `frontend/dist`，后端会直接托管。
@@ -336,7 +338,7 @@ $env:HUBIAO_LLM_ENABLED="true"
 $env:HUBIAO_LLM_BASE_URL="http://127.0.0.1:11434/v1"
 $env:HUBIAO_LLM_API_KEY="not-needed"
 $env:HUBIAO_LLM_MODEL="qwen2.5:14b"
-java -jar backend/target/huibiao-backend-0.8.2.jar
+java -jar backend/target/huibiao-backend-1.0.0.jar
 ```
 
 模型只用于补充场景判断，不参与数值计算。未配置或调用失败时自动退回规则解析。

@@ -21,7 +21,7 @@ spring:
       request-timeout: 30000
 
 app:
-  version: 0.8.2
+  version: 1.0.0
   data-dir: data
   sample-dir: ../sample_data/raw
   frontend-dir: ../frontend/dist

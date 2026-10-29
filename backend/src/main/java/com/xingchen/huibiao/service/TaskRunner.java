@@ -9,6 +9,7 @@ import com.xingchen.huibiao.model.IntentResult;
 import com.xingchen.huibiao.model.ProcessResult;
 import com.xingchen.huibiao.model.TaskRecord;
 import com.xingchen.huibiao.service.agent.ExperienceStore;
+import com.xingchen.huibiao.service.sheet.SheetService;
 import com.xingchen.huibiao.util.TextUtils;
 import com.xingchen.huibiao.util.TimeUtils;
 import org.slf4j.Logger;
@@ -38,10 +39,11 @@ public class TaskRunner {
     private final SettingsService settings;
     private final ExperienceStore experience;
     private final ResultEditService edits;
+    private final SheetService sheetService;
 
     public TaskRunner(TaskStore store, FileService files, IntentService intent,
                       SceneRouter router, ExportService export, SettingsService settings,
-                      ExperienceStore experience, ResultEditService edits) {
+                      ExperienceStore experience, ResultEditService edits, SheetService sheetService) {
         this.store = store;
         this.files = files;
         this.intent = intent;
@@ -50,6 +52,7 @@ public class TaskRunner {
         this.settings = settings;
         this.experience = experience;
         this.edits = edits;
+        this.sheetService = sheetService;
     }
 
     @Async("taskExecutor")
@@ -142,6 +145,8 @@ public class TaskRunner {
             }
             task.progress = 100;
             addLog(task, "ok", "任务完成，产出 " + task.artifacts.size() + " 个文件");
+            // 结果表同步收进「我的仓库」，处理日志一并带过去
+            archive(task);
             // 只要产出了结果，这套映射就值得记下来；异常行由人工复核，不影响下次复用配置
             if (result.outputRows > 0) {
                 remember(task, plan, request);
@@ -410,6 +415,20 @@ public class TaskRunner {
 
     private void addLog(TaskRecord task, String level, String message) {
         task.logs.add(new TaskRecord.LogEntry(TimeUtils.clock(), level, message));
+    }
+
+    /**
+     * 把结果表归档进「我的仓库」。归档失败不影响任务本身，只在任务日志里提示一句，
+     * 结果文件仍然可以从任务详情下载。
+     */
+    private void archive(TaskRecord task) {
+        try {
+            Map<String, Object> sheet = sheetService.archiveFromTask(task);
+            addLog(task, "info", "结果已归档到「我的仓库」：" + sheet.get("name"));
+        } catch (Exception e) {
+            log.warn("任务 {} 归档到表格仓库失败：{}", task.id, e.getMessage());
+            addLog(task, "warn", "归档到「我的仓库」失败：" + e.getMessage());
+        }
     }
 
     private void finish(TaskRecord task, long started) {

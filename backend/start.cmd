@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-set JAR=target\huibiao-backend-0.8.2.jar
+set JAR=target\huibiao-backend-1.0.0.jar
 
 if not exist "%JAR%" (
     echo 没有找到已构建的 jar，尝试用 Maven 打包...

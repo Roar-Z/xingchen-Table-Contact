@@ -3,6 +3,6 @@
  */
 export const project = {
   repo: 'https://github.com/xingchen-huibiao/huibiao',
-  version: '0.8.2',
+  version: '1.0.0',
   team: '星尘汇表智联'
 }

@@ -2,6 +2,7 @@ package com.xingchen.huibiao.service.sheet;
 
 import com.xingchen.huibiao.config.DataPaths;
 import com.xingchen.huibiao.model.SheetRecord;
+import com.xingchen.huibiao.model.TaskRecord;
 import com.xingchen.huibiao.service.sheet.SheetFile.Table;
 import com.xingchen.huibiao.util.TextUtils;
 import com.xingchen.huibiao.util.TimeUtils;
@@ -15,6 +16,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -75,6 +77,43 @@ public class SheetService {
         return out;
     }
 
+    /**
+     * 仓库列表的服务端分页：默认每页 10 张，和市面主流表格的翻页习惯一致。
+     * 顶部三块统计始终按仓库全集算，不然翻到第 2 页数字会跟着变。
+     */
+    public Map<String, Object> page(String keyword, int page, int pageSize) {
+        List<Map<String, Object>> all = list(keyword);
+        int size = Math.max(1, Math.min(pageSize, 50));
+        int total = all.size();
+        int pages = Math.max(1, (total + size - 1) / size);
+        int current = Math.min(Math.max(1, page), pages);
+        int from = Math.min(total, (current - 1) * size);
+        int to = Math.min(total, from + size);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", new ArrayList<>(all.subList(from, to)));
+        out.put("page", current);
+        out.put("pages", pages);
+        out.put("page_size", size);
+        out.put("total", total);
+
+        List<Map<String, Object>> whole = list(null);
+        long rows = 0;
+        long revisions = 0;
+        for (Map<String, Object> item : whole) {
+            rows += numberOf(item.get("row_count"));
+            revisions += numberOf(item.get("revision_count"));
+        }
+        out.put("sheet_total", whole.size());
+        out.put("row_total", rows);
+        out.put("revision_total", revisions);
+        return out;
+    }
+
+    private long numberOf(Object value) {
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
     public Map<String, Object> detail(String id) {
         SheetRecord record = store.require(id);
         Map<String, Object> out = new LinkedHashMap<>(record.summary());
@@ -87,22 +126,90 @@ public class SheetService {
         return SheetTemplates.items();
     }
 
-    public List<Map<String, Object>> recentLogs(int limit) {
-        List<Map<String, Object>> out = new ArrayList<>();
+    /**
+     * 仓库操作日志：所有表格的日志合在一起按时间倒序，服务端分页。
+     * 总量由 SheetStore 控制在最近 100 条，这里只负责切页。
+     */
+    public Map<String, Object> logs(int page, int pageSize) {
+        List<Map<String, Object>> all = new ArrayList<>();
         for (SheetRecord record : store.all()) {
             for (SheetRecord.LogEntry entry : record.logs) {
                 Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", entry.id);
                 item.put("sheet_id", record.id);
                 item.put("sheet_name", record.name);
                 item.put("time", entry.time);
                 item.put("action", entry.action);
                 item.put("detail", entry.detail);
                 item.put("level", entry.level);
-                out.add(item);
+                all.add(item);
             }
         }
-        out.sort(Comparator.comparing((Map<String, Object> m) -> String.valueOf(m.get("time"))).reversed());
-        return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
+        // 已经删掉的表也要出现在操作日志里，否则用户删完表就看不到「删除表格」这件事了
+        for (SheetStore.ArchivedLog entry : store.archived()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", entry.id);
+            item.put("sheet_id", entry.sheetId);
+            item.put("sheet_name", entry.sheetName);
+            item.put("time", entry.time);
+            item.put("action", entry.action);
+            item.put("detail", entry.detail);
+            item.put("level", entry.level);
+            item.put("deleted", true);
+            all.add(item);
+        }
+        all.sort(Comparator.comparing((Map<String, Object> m) -> String.valueOf(m.get("time"))).reversed());
+
+        int size = Math.max(1, Math.min(pageSize, 50));
+        int total = all.size();
+        int pages = Math.max(1, (total + size - 1) / size);
+        int current = Math.min(Math.max(1, page), pages);
+        int from = Math.min(total, (current - 1) * size);
+        int to = Math.min(total, from + size);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", new ArrayList<>(all.subList(from, to)));
+        out.put("page", current);
+        out.put("pages", pages);
+        out.put("page_size", size);
+        out.put("total", total);
+        out.put("keep", SheetStore.MAX_LOGS);
+        return out;
+    }
+
+    /**
+     * 删日志：ids 为空表示清空全部，否则只删勾中的那几条。
+     * 日志和表格文件分开存，删日志不会动表格数据。
+     */
+    public Map<String, Object> deleteLogs(List<String> ids) {
+        Set<String> target = new HashSet<>();
+        if (ids != null) {
+            for (String id : ids) {
+                if (id != null && !id.isBlank()) {
+                    target.add(id);
+                }
+            }
+        }
+        boolean clearAll = target.isEmpty();
+        int deleted = 0;
+        for (SheetRecord record : store.all()) {
+            if (clearAll) {
+                deleted += record.logs.size();
+                record.logs = new ArrayList<>();
+            } else {
+                int before = record.logs.size();
+                record.logs.removeIf(entry -> target.contains(entry.id));
+                deleted += before - record.logs.size();
+            }
+        }
+        // 已删除表格留下的「删除表格」日志也要能被勾选删掉
+        int archivedBefore = store.archived().size();
+        store.removeArchived(target, clearAll);
+        deleted += clearAll ? archivedBefore : archivedBefore - store.archived().size();
+        store.save();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", deleted);
+        return out;
     }
 
     /**
@@ -227,6 +334,82 @@ public class SheetService {
         record.log("新建", "空白表 " + names.size() + " 列", "ok");
         save(record, new Table(names, new ArrayList<>()));
         return detail(record.id);
+    }
+
+    /**
+     * 把智能体任务的产出表收进「我的仓库」：任务一跑完，结果表就能在这里继续改、继续下载。
+     * 同一个任务重跑只覆盖它原来那张表，不会每跑一次就多堆一张。
+     */
+    public Map<String, Object> archiveFromTask(TaskRecord task) {
+        if (task == null || task.id == null || task.id.isBlank()) {
+            throw new IllegalArgumentException("缺少任务号，无法归档");
+        }
+        Path source = outputWorkbookOf(task);
+        Table table;
+        try {
+            table = SheetFile.read(source);
+        } catch (IOException e) {
+            throw new IllegalStateException("任务产出表读取失败：" + e.getMessage(), e);
+        }
+        if (table.columns.isEmpty()) {
+            throw new IllegalArgumentException("任务产出表没有表头，跳过归档");
+        }
+        SheetRecord record = store.all().stream()
+                .filter(item -> task.id.equals(item.taskId))
+                .findFirst()
+                .orElse(null);
+        boolean exists = record != null;
+        if (!exists) {
+            record = newRecord(task.name, "task");
+            record.taskId = task.id;
+            record.originalName = source.getFileName().toString();
+        }
+        record.note = "任务 " + task.id + " 的产出表，可以像普通表格一样继续改；异常行在任务详情里单独看";
+        // 表体被整份换掉，上一版的撤销快照就对不上了，先关掉
+        record.undoAvailable = false;
+        record.undoRowCount = 0;
+        // 每次处理只留一条「什么时候处理完成」：过程细节在任务详情的日志里看，
+        // 仓库这边不需要每跑一次就灌进十几条中间步骤，找起来反而费劲
+        record.logs.removeIf(entry -> "任务处理".equals(entry.action)
+                || "归档".equals(entry.action) || "重新归档".equals(entry.action)
+                || "处理完成".equals(entry.action) || "重新处理完成".equals(entry.action));
+        String when = task.finishedAt == null || task.finishedAt.isBlank() ? TimeUtils.nowSecond() : task.finishedAt;
+        String detail = "任务 " + task.id + " 处理完成，输出 " + table.rows.size() + " 行"
+                + (task.anomalyRows > 0 ? "，异常隔离 " + task.anomalyRows + " 行" : "");
+        if (exists) {
+            record.log(when, "重新处理完成", "任务重跑，已按新结果覆盖本表；" + detail, "ok");
+        } else {
+            record.log(when, "处理完成", detail, "ok");
+        }
+        save(record, table);
+        return record.summary();
+    }
+
+    /**
+     * 产出里优先收 xlsx：xls 是给 HR 导入的老格式，xlsx 才是能继续编辑的那一份。
+     */
+    private Path outputWorkbookOf(TaskRecord task) {
+        Path dir = paths.taskOutputDir(task.id);
+        Path fallback = null;
+        for (TaskRecord.Artifact artifact : task.artifacts) {
+            if (artifact == null || artifact.name == null) {
+                continue;
+            }
+            Path file = dir.resolve(artifact.name).normalize();
+            if (!Files.isRegularFile(file)) {
+                continue;
+            }
+            if (artifact.name.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
+                return file;
+            }
+            if (fallback == null) {
+                fallback = file;
+            }
+        }
+        if (fallback != null) {
+            return fallback;
+        }
+        throw new IllegalArgumentException("任务没有产出可归档的表格文件，看看任务详情里的日志");
     }
 
     /**
@@ -575,9 +758,42 @@ public class SheetService {
 
     public void delete(String id) {
         SheetRecord record = store.require(id);
+        // 删表前把这张表的操作记录整体转存，再补一条「删除表格」：
+        // 表没了，但日志里还能看到什么时候删的、删掉的是哪张表、原来有多少行
+        int columns = record.columns == null ? 0 : record.columns.size();
+        String detail = String.format("已从仓库删除，原有 %d 行、%d 列", record.rowCount, columns);
+        store.archiveSheet(record.id, record.name, record.logs,
+                TimeUtils.nowSecond(), "删除表格", detail, "warn");
         store.remove(record.id);
         cache.remove(id);
         log.info("删除表格 {}（{}）", record.id, record.name);
+    }
+
+    /**
+     * 批量删除：勾选多张表后一次删掉，每张都走同一套「先归档日志再删文件」的流程。
+     * 个别表已经被别处删掉的不影响其它几张，结果里分开回报。
+     */
+    public Map<String, Object> deleteMany(List<String> ids) {
+        List<String> deleted = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        if (ids != null) {
+            for (String id : ids) {
+                if (id == null || id.isBlank()) {
+                    continue;
+                }
+                try {
+                    delete(id);
+                    deleted.add(id);
+                } catch (IllegalArgumentException e) {
+                    missing.add(id);
+                }
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", deleted.size());
+        out.put("ids", deleted);
+        out.put("missing", missing);
+        return out;
     }
 
     /* ==================== 操作执行 ==================== */

@@ -1,27 +1,30 @@
-# ---------- 构建产物 ----------
+# 构建产物
 backend/target/
 frontend/node_modules/
 frontend/dist/
+docs/tools/node_modules/
 
-# ---------- 运行时数据（上传表、任务记录、导出结果） ----------
+# 运行数据（任务、表格、日志都是本机跑出来的，演示数据由 sample_data 提供）
 backend/data/
 
-# ---------- 密钥：只保留示例，真实配置留在本机 ----------
+# 本机密钥配置（放了大模型 api-key，不要提交）
 backend/config/application.yml
-.env
-.env.*
 
-# ---------- 本机资料 / 内部文档，不入库 ----------
-docs/
-sample_data/
-backend/src/main/resources/static/docs/
+# 交付仓库只放代码：根目录 docs/ 下的产品、开发文档留在本机，不随代码提交
+# （只忽略仓库根目录，backend 里打包用的静态文档仍然提交）
+/docs/
 
-# ---------- 编辑器与系统文件 ----------
+# 编辑器
 .vscode/
 .idea/
 *.iml
+
+# 系统文件
 .DS_Store
 Thumbs.db
 
-# ---------- 日志 ----------
+# 日志
 *.log
+
+# 示例数据：来自真实业务系统导出，涉及隐私，不入库
+sample_data/

@@ -33,8 +33,12 @@ import java.util.Map;
 public class AgentRunStore {
 
     private static final Logger log = LoggerFactory.getLogger(AgentRunStore.class);
-    private static final int MAX_RUNS = 300;
+    /** 本地只保留最近 100 条运行记录，超出后丢弃最旧的，避免长期运行把磁盘写满。 */
+    static final int MAX_RUNS = 100;
     private static final int RECENT_LIMIT = 12;
+
+    /** 分页每页上限，防止前端一次把 100 条全拉走。 */
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final DataPaths paths;
     private final ObjectMapper mapper;
@@ -58,6 +62,11 @@ public class AgentRunStore {
             if (loaded != null) {
                 runs.clear();
                 runs.addAll(loaded);
+            }
+            // 旧版本可能存了 300 条，启动时按新上限收敛并回写
+            if (runs.size() > MAX_RUNS) {
+                runs.subList(0, runs.size() - MAX_RUNS).clear();
+                save();
             }
         } catch (Exception e) {
             log.warn("读取智能体运行记录失败，本次按空记录启动：{}", e.getMessage());
@@ -187,6 +196,32 @@ public class AgentRunStore {
         List<Run> tail = new ArrayList<>(runs.subList(runs.size() - size, runs.size()));
         tail.sort(Comparator.comparing((Run run) -> run.at).reversed());
         return tail;
+    }
+
+    /**
+     * 运行记录分页：新的在前，返回 items / total / page / pages。
+     * 前端只拿当前页，统计口径仍按全部留存记录算。
+     */
+    public synchronized Map<String, Object> page(int page, int pageSize) {
+        int size = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
+        int total = runs.size();
+        int pages = total == 0 ? 1 : (int) Math.ceil(total * 1.0 / size);
+        int current = Math.min(Math.max(page, 1), pages);
+
+        List<Run> ordered = new ArrayList<>(runs);
+        ordered.sort(Comparator.comparing((Run run) -> run.at).reversed());
+        int from = Math.min((current - 1) * size, total);
+        int to = Math.min(from + size, total);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", new ArrayList<>(ordered.subList(from, to)));
+        out.put("total", total);
+        out.put("page", current);
+        out.put("page_size", size);
+        out.put("pages", pages);
+        // 单页最多装得下 MAX_RUNS 条，这里顺带告诉前端本地留存上限
+        out.put("keep", MAX_RUNS);
+        return out;
     }
 
     private void save() {

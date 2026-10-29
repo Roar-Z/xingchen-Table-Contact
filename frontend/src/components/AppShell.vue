@@ -1,12 +1,15 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from './Icon.vue'
 import logoMark from '../assets/logo-mark.png'
 import { api, apiState } from '../api'
+import { clearNotice, noticeRetry, noticeText, retryNotice } from '../appNotice'
 import {
+  railDetail,
   railMemory,
   railMemoryRequest,
+  railScope,
   railState,
   railSteps,
   railTools,
@@ -32,8 +35,8 @@ const currentTitle = computed(() => {
 })
 
 const onlineText = computed(() => {
-  if (apiState.online === null) return '正在连接后端'
-  return apiState.online ? '后端服务正常' : '后端未连接'
+  if (apiState.online === null) return '正在连接服务'
+  return apiState.online ? '服务运行正常' : '服务连接中断'
 })
 
 const onlineClass = computed(() => {
@@ -41,6 +44,8 @@ const onlineClass = computed(() => {
   return apiState.online ? 'on' : 'off'
 })
 
+// 左下角那一行汇总：桥接模式的“步”是规划器排出的子任务数，标准模式是已跑完的动作数；
+// 没有步数（还没规划 / 正在规划）时只留规则条数，状态已经由上面的状态点交代
 function isActive(name) {
   if (name === 'tasks') return route.name === 'tasks' || route.name === 'task-detail'
   if (name === 'sheets') return route.name === 'sheets' || route.name === 'sheet-repo'
@@ -50,6 +55,43 @@ function isActive(name) {
 // 后端可能在跑着跑着被停掉，也可能晚于前端启动，所以定期探一次，不要只在打开页面时探
 let probeTimer = null
 
+// 换页面时把上一条提示清掉，避免 A 页的报错跟着出现在 B 页
+watch(() => route.fullPath, () => {
+  clearNotice()
+  offlineMuted.value = false
+})
+
+/* ---------------- 顶栏下方的统一提示条 ----------------
+ * 两种来源：页面自己报的错（noticeText），以及服务连不上。
+ * 都只在同一处显示，各页正文里不再各摆一条红带。
+ */
+const offlineMuted = ref(false)
+
+watch(
+  () => apiState.online,
+  (online) => {
+    if (online) offlineMuted.value = false
+  }
+)
+
+const noticeBarText = computed(() => {
+  if (noticeText.value) return noticeText.value
+  if (apiState.online === false && !offlineMuted.value) return '暂时连不上服务，请稍后刷新页面重试。'
+  return ''
+})
+
+const noticeBarRetry = computed(() => (noticeText.value ? !!noticeRetry.value : apiState.online === false))
+
+function onNoticeRetry() {
+  if (noticeText.value) retryNotice()
+  else probeHealth()
+}
+
+function dismissNotice() {
+  if (noticeText.value) clearNotice()
+  else offlineMuted.value = true
+}
+
 function probeHealth() {
   api.health().catch(() => {})
 }
@@ -58,17 +100,34 @@ function onVisible() {
   if (document.visibilityState === 'visible') probeHealth()
 }
 
+/* ---------------- 左下角设置菜单 ----------------
+ * 点齿轮打开，点页面别处或按 Esc 收起，和主流应用的侧边栏设置菜单一致
+ */
+const settingsOpen = ref(false)
+
+function closeSettings() {
+  settingsOpen.value = false
+}
+
+function onKeydown(event) {
+  if (event.key === 'Escape') settingsOpen.value = false
+}
+
 onMounted(() => {
   probeHealth()
   probeTimer = setInterval(probeHealth, 8000)
   document.addEventListener('visibilitychange', onVisible)
   window.addEventListener('focus', probeHealth)
+  document.addEventListener('click', closeSettings)
+  document.addEventListener('keydown', onKeydown)
 })
 
 onBeforeUnmount(() => {
   if (probeTimer) clearInterval(probeTimer)
   document.removeEventListener('visibilitychange', onVisible)
   window.removeEventListener('focus', probeHealth)
+  document.removeEventListener('click', closeSettings)
+  document.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -76,10 +135,10 @@ onBeforeUnmount(() => {
   <div class="shell">
     <aside class="sidebar">
       <router-link to="/" class="brand">
-        <img class="brand-mark" :src="logoMark" alt="汇表" />
+        <img class="brand-mark" :src="logoMark" :alt="project.team" />
         <span>
-          <span class="brand-name">汇表</span>
-          <span class="brand-sub">表格桥接智能体</span>
+          <span class="brand-name">{{ project.team }}</span>
+          <span class="brand-sub">跨系统表格桥接与处理智能体</span>
         </span>
       </router-link>
 
@@ -96,19 +155,28 @@ onBeforeUnmount(() => {
         </router-link>
       </nav>
 
-      <!-- 新建任务页的智能体进度：就在导航下面，一抬眼能看到，不占正文宽度 -->
+      <!-- 新建任务页的操作步骤：就在导航下面，一抬眼能看到，不占正文宽度 -->
       <section
         v-if="railVisible"
         class="nav-rail"
-        title="数值口径由确定性代码执行，大模型只做语义判断；任何自动结论都需用户确认后生效"
+        title="这里按顺序列出本次要做的每个环节；涉及数据与数值的结论都需要你确认后才会生效"
       >
         <div class="nav-rail-head">
-          <b>汇表智能体</b>
+          <b>操作步骤</b>
+          <span class="nav-rail-scope" :class="railScope === 'bridge' ? 'is-agent' : ''">
+            {{ railScope === 'bridge' ? '智能体' : '半自动' }}
+          </span>
           <span class="nav-rail-state" :class="`is-${railTone}`">{{ railState }}</span>
         </div>
+        <p v-if="railDetail" class="nav-rail-detail">{{ railDetail }}</p>
         <div class="nav-rail-tools">
           <p v-if="!railTools.length" class="nav-rail-idle">
-            点「交给智能体规划」后，这里会按实际进度逐条显示它在做什么
+            <template v-if="railScope === 'bridge'">
+              提交数据集并说明业务目标后，智能体按「识别数据表 → 对齐字段 → 跨表计算 → 输出结果表」推进，环节与进度显示在这里。
+            </template>
+            <template v-else>
+              提交源表与目标模板后，系统按「读取源表 → 生成字段映射 → 人工核对 → 按模板导出」推进，环节与进度显示在这里。
+            </template>
           </p>
           <span
             v-for="tool in railTools"
@@ -123,48 +191,63 @@ onBeforeUnmount(() => {
         </div>
         <div class="nav-rail-foot">
           <span class="nav-rail-sum">
-            {{ railSteps ? `${railSteps} 步` : railState === '规划中' ? '规划中' : '未开始' }} · {{ railMemory }} 条经验
+            <template v-if="railSteps > 0">{{ railSteps }} 步 · </template>{{ railMemory }} {{ railScope === 'bridge' ? '条规则' : '条经验' }}
           </span>
-          <button type="button" class="nav-rail-more" @click="railMemoryRequest += 1">管理</button>
+          <button
+            type="button"
+            class="nav-rail-more"
+            :title="railScope === 'bridge' ? '打开自定义字段匹配规则' : '打开历史方案记忆'"
+            @click="railMemoryRequest += 1"
+          >
+            管理
+          </button>
         </div>
       </section>
 
       <div class="sidebar-foot">
-        <span class="net" title="点一下重新检测" @click="probeHealth">
-          <i class="net-dot" :class="onlineClass" />
-          {{ onlineText }}
-        </span>
-        <div class="foot-links">
-          <a
-            class="foot-link"
-            href="/docs/product.html"
-            target="_blank"
-            rel="noreferrer"
-            data-tip="产品设计文档"
-            aria-label="产品设计文档"
-          >
-            <Icon name="book" :size="15" />
-          </a>
-          <a
-            class="foot-link"
-            :href="project.repo"
-            target="_blank"
-            rel="noreferrer"
-            data-tip="GitHub 源码"
-            aria-label="GitHub 源码"
-          >
-            <Icon name="github" :size="15" />
-          </a>
-          <a
-            class="foot-link"
-            href="/docs/dev.html"
-            target="_blank"
-            rel="noreferrer"
-            data-tip="开发文档"
-            aria-label="开发文档"
-          >
-            <Icon name="code" :size="15" />
-          </a>
+        <div class="foot-row">
+          <span class="net" title="点一下重新检测" @click="probeHealth">
+            <i class="net-dot" :class="onlineClass" />
+            {{ onlineText }}
+          </span>
+          <!-- 设置入口贴在最右侧；产品/开发文档和运行观测收进菜单，图标行不再堆一排 -->
+          <div class="foot-links">
+            <button
+              type="button"
+              class="foot-link foot-link-btn"
+              :class="{ 'is-open': settingsOpen }"
+              data-tip="设置"
+              aria-label="设置"
+              :aria-expanded="settingsOpen"
+              @click.stop="settingsOpen = !settingsOpen"
+            >
+              <Icon name="gear" :size="15" />
+            </button>
+            <div v-if="settingsOpen" class="foot-menu" @click.stop>
+              <span class="foot-menu-head">系统与文档</span>
+              <router-link class="foot-menu-item" to="/ops" @click="closeSettings">
+                <Icon name="shield" :size="13" />运行观测
+              </router-link>
+              <a
+                class="foot-menu-item"
+                href="/docs/product.html"
+                target="_blank"
+                rel="noreferrer"
+                @click="closeSettings"
+              >
+                <Icon name="book" :size="13" />产品设计文档
+              </a>
+              <a
+                class="foot-menu-item"
+                href="/docs/dev.html"
+                target="_blank"
+                rel="noreferrer"
+                @click="closeSettings"
+              >
+                <Icon name="code" :size="13" />开发文档
+              </a>
+            </div>
+          </div>
         </div>
         <span class="foot-version">v{{ project.version }} · {{ project.team }}</span>
       </div>
@@ -205,6 +288,17 @@ onBeforeUnmount(() => {
           </router-link>
         </div>
       </header>
+
+      <!-- 全局提示条：所有页面的报错都收在这一处，位置固定在顶栏下方，样式统一 -->
+      <div v-if="noticeBarText" class="app-notice" role="alert">
+        <Icon name="alert" :size="14" />
+        <span class="app-notice-text">{{ noticeBarText }}</span>
+        <button v-if="noticeBarRetry" type="button" class="app-notice-retry" @click="onNoticeRetry">重试</button>
+        <button type="button" class="app-notice-close" title="关闭提示" @click="dismissNotice">
+          <Icon name="close" :size="12" />
+        </button>
+      </div>
+
       <main class="content">
         <slot />
       </main>
@@ -213,6 +307,55 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 全局提示条：统一贴顶栏下方通栏显示，各页不再各自在正文里摆红带 */
+.app-notice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 28px;
+  border-bottom: 1px solid #f3d2cf;
+  background: #fdf0ef;
+  color: #b4453c;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.app-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-notice-retry {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #b4453c;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.app-notice-close {
+  display: inline-flex;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: #b4453c;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.app-notice-close:hover {
+  opacity: 1;
+}
+
+@media (max-width: 720px) {
+  .app-notice {
+    padding: 8px 16px;
+  }
+}
+
 /* 导航下方的智能体状态：只用一条细线和几行小字，不加底色和阴影 */
 .nav-rail {
   margin-top: 18px;
@@ -225,6 +368,24 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+}
+
+/* 模式标记：智能体 / 半自动，小号胶囊，不抢状态点的视觉重量 */
+.nav-rail-scope {
+  margin-right: auto;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--line-soft);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* 智能体模式是自动规划，用主色把「智能体」三个字提亮，和半自动区分开 */
+.nav-rail-scope.is-agent {
+  background: rgb(43 95 217 / 12%);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .nav-rail-head b {
@@ -260,6 +421,14 @@ onBeforeUnmount(() => {
 
 .nav-rail-state.is-wait::before {
   background: #cc9426;
+}
+
+/* 方案摘要：一句话说明本次桥接的规模，和上面的状态点形成“现在到哪 + 这次做了什么” */
+.nav-rail-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .nav-rail-tools {

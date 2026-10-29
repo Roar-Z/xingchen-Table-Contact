@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { project } from './project'
 import NewTask from './views/NewTask.vue'
 import TaskList from './views/TaskList.vue'
 import TaskDetail from './views/TaskDetail.vue'
@@ -8,7 +9,8 @@ import OpsView from './views/OpsView.vue'
 import NotFound from './views/NotFound.vue'
 
 const routes = [
-  { path: '/', name: 'new-task', component: NewTask, meta: { title: '新建任务' } },
+  // 标签页标题跟页面自己的标题保持一致：首页正文叫「智能体工作台」，就不要写成「新建任务」
+  { path: '/', name: 'new-task', component: NewTask, meta: { title: '智能体工作台' } },
   { path: '/tasks/new', redirect: '/' },
   { path: '/tasks', name: 'tasks', component: TaskList, meta: { title: '任务记录' } },
   { path: '/tasks/:id', name: 'task-detail', component: TaskDetail, meta: { title: '任务详情' } },
@@ -20,11 +22,16 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  // 切页面时把滚动条复位到顶部；浏览器前进 / 后退才回到原来的位置
+  scrollBehavior(to, from, savedPosition) {
+    return savedPosition || { top: 0 }
+  }
 })
 
 router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} · 汇表` : '汇表'
+  // 标签页统一带品牌名，和侧边栏「星尘汇表智联」一致，不再用旧的「汇表」
+  document.title = to.meta.title ? `${to.meta.title} · ${project.team}` : project.team
 })
 
 export default router

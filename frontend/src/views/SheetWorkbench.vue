@@ -6,23 +6,35 @@
  * 上传 / 模板建表 / 一句话建表或融合 / 双击改格子 / 一句话改表 / 分页查询 / 日志。
  * 每张表始终对应一个 xlsx，下载到的文件和页面上看到的完全一致。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
 import { api, isNetworkError } from '../api'
+import { clearNotice, showNotice } from '../appNotice'
 import { useToast } from '../toast'
 import { clearTopbar, useTopbar } from '../topbar'
+
+// 和 App.vue 里 keep-alive 的 include 一致：切到别的页面再回来时，
+// 清单、已展开的表格和输入内容都还在，不会重新挂载闪一次骨架
+defineOptions({ name: 'SheetWorkbench' })
 
 const route = useRoute()
 const { show } = useToast()
 
-useTopbar({
-  title: '表格智作',
-  desc: '上传 Excel 直接改，或者用一句话建表、合并；每张表都是一份独立的文件，改完就能下载。'
-})
+// keep-alive 收回后顶栏会被别的页面顶掉，激活时要重新挂回来
+function mountTopbar() {
+  useTopbar({
+    title: '表格智作',
+    desc: '上传 Excel 直接改，或者用一句话建表、合并；每张表都是一份独立的文件，改完就能下载。'
+  })
+}
 
 onBeforeUnmount(() => clearTopbar())
+
+// 页面被 keep-alive 缓存后，切走时只会触发 deactivated、不会卸载；
+// 这里必须手动收起顶栏，否则「任务记录 / 运行观测」会顶着“表格智作”的标题和说明
+onDeactivated(() => clearTopbar())
 
 const tables = ref([])
 const loading = ref(true)
@@ -77,6 +89,19 @@ function fillComposer(text) {
   })
 }
 
+/**
+ * 左栏勾选两张以上后点「合并选中」：展开一句话输入框，把说法填好并把光标放到末尾，
+ * 用户还能补一句用哪一列对齐，然后再点「生成」——不会直接替他执行。
+ */
+function startMergeSelected() {
+  if (selected.value.length < 2) return
+  composerOpen.value = true
+  fillComposer(`把选中的 ${selected.value.length} 张表合并`)
+  nextTick(() => {
+    if (composerInput.value) composerInput.value.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
 function fillDraft(id, text) {
   drafts[id] = text
   revErrors[id] = ''
@@ -107,7 +132,7 @@ const dialogConfirmText = computed(() => {
 })
 
 const originText = (origin) =>
-  ({ upload: '上传', template: '模板', nl: '新建', merge: '融合' })[origin] || '表格'
+  ({ upload: '上传', template: '模板', nl: '新建', merge: '融合', task: '任务归档' })[origin] || '表格'
 
 function fmtTime(value) {
   const text = String(value || '')
@@ -121,11 +146,15 @@ async function loadTables(silent = false) {
   listError.value = ''
   try {
     tables.value = await api.sheets({ q: keyword.value.trim() })
+    // 这一次取到了，就把上一次留下的提示收掉
+    clearNotice()
     for (const id of opened.value) {
       if (!details[id]) await loadDetail(id)
     }
   } catch (err) {
-    listError.value = isNetworkError(err) ? '后端没有连上，先启动 backend/start.cmd' : err.message
+    listError.value = isNetworkError(err) ? '暂时连不上服务，请稍后刷新重试' : err.message
+    // 报错统一交给顶栏下方那条全局提示，正文里不再单独摆一条红带
+    showNotice(listError.value, () => loadTables())
   } finally {
     loading.value = false
   }
@@ -167,6 +196,52 @@ function toggleSelect(id) {
   selected.value = selected.value.includes(id)
     ? selected.value.filter((item) => item !== id)
     : [...selected.value, id]
+}
+
+// 顶部那个复选框就是全选：点一次勾上全部，再点一次全部取消（主流列表的常规做法）
+const allSelected = computed(
+  () => tables.value.length > 0 && selected.value.length === tables.value.length
+)
+
+function toggleSelectAll() {
+  selected.value = allSelected.value ? [] : tables.value.map((item) => item.id)
+}
+
+// 「删除选中」：把左栏勾选的表连同文件一起删掉。
+// 只删勾选的那些，不碰没勾的；已展开的卡片同步收起，清单立刻刷新
+const selectedBusy = ref(false)
+
+async function removeSelected() {
+  const ids = [...selected.value]
+  if (!ids.length || selectedBusy.value) return
+  const names = tables.value.filter((item) => ids.includes(item.id)).map((item) => item.name)
+  const tip = ids.length === 1
+    ? `确定删除「${names[0]}」？文件会一起删掉，删除后不能恢复。`
+    : `确定删除选中的 ${ids.length} 张表？\n${names.slice(0, 5).join('、')}${names.length > 5 ? ' 等' : ''}\n文件会一起删掉，删除后不能恢复。`
+  if (!window.confirm(tip)) return
+  selectedBusy.value = true
+  try {
+    let count = ids.length
+    try {
+      const res = await api.deleteSheets(ids)
+      count = res?.deleted ?? ids.length
+    } catch (e) {
+      // 后端还没换成带批量删除的版本时，退回逐张删，功能照样可用
+      count = 0
+      for (const id of ids) {
+        await api.deleteSheet(id)
+        count += 1
+      }
+    }
+    ids.forEach((id) => closeCard(id))
+    selected.value = []
+    await loadTables(true)
+    show(`已删除 ${count} 张表`)
+  } catch (err) {
+    show(err.message || '删除失败', 'err')
+  } finally {
+    selectedBusy.value = false
+  }
 }
 
 /* ==================== 上传 ==================== */
@@ -424,7 +499,9 @@ async function submitDialog() {
       show('已删除表格')
     }
     dialog.open = false
-    if (dialog.kind !== 'delete') await loadTables(true)
+    // 删除后也要重新拉清单：左侧栏、计数和空状态都跟着表格数量走，
+    // 不刷新会留着已被删掉的那一行，看起来“删了还在”
+    await loadTables(true)
   } catch (err) {
     dialog.error = err.message
   } finally {
@@ -435,6 +512,7 @@ async function submitDialog() {
 /* ==================== 生命周期 ==================== */
 
 onMounted(async () => {
+  mountTopbar()
   await loadTables()
   const target = route.query.id
   if (target) {
@@ -444,6 +522,22 @@ onMounted(async () => {
   } else if (tables.value.length) {
     opened.value = [tables.value[0].id]
     await loadDetail(tables.value[0].id)
+  }
+})
+
+// 从别的页面切回来：顶栏复位 + 静默刷新（不触发骨架、不收起已展开的表格）。
+// 清单和已展开表格的详情都补一次，避免别处增删表后这里还显示旧的行数或已删除的表。
+onActivated(async () => {
+  mountTopbar()
+  if (loading.value) return
+  await loadTables(true)
+  for (const id of opened.value.slice()) {
+    if (!tables.value.some((item) => item.id === id)) {
+      closeCard(id)
+      continue
+    }
+    await loadDetail(id)
+    refreshing[id] = (refreshing[id] || 0) + 1
   }
 })
 
@@ -468,9 +562,9 @@ onBeforeUnmount(() => {
       @change="onFiles"
     />
 
-    <div class="sw-layout" :class="{ 'is-solo': !tables.length && !keyword }">
+    <div class="sw-layout" :class="{ 'is-solo': !tables.length }">
       <!-- 首次加载时不要先摆一个空清单壳子，否则屏幕上是两块空面板并排闪一下 -->
-      <aside v-if="tables.length || keyword" class="sw-side">
+      <aside v-if="tables.length" class="sw-side">
         <div class="sw-side-head">
           <b>我的表格</b>
           <span class="sw-count">{{ tables.length }}</span>
@@ -479,8 +573,8 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <!-- 一张表都没有时，右侧已经有大块上传入口，左边不再重复；搜索词还在时要留着框好清空 -->
-        <div v-if="tables.length || keyword" class="sw-side-search">
+        <!-- 左栏只在确实有表格时出现，搜索框随清单一起展示 -->
+        <div class="sw-side-search">
           <Icon name="search" :size="14" />
           <input
             v-model="keyword"
@@ -512,6 +606,17 @@ onBeforeUnmount(() => {
           <span class="sw-drop-sub">拖入或点击选择，可多选</span>
         </div>
 
+        <!-- 全选就一个复选框，和列表里每行的勾选框对齐；再点一次就全部取消 -->
+        <div class="sw-list-all">
+          <input
+            type="checkbox"
+            aria-label="全选"
+            :checked="allSelected"
+            :indeterminate.prop="selected.length > 0 && !allSelected"
+            @change="toggleSelectAll"
+          />
+        </div>
+
         <ul class="sw-list">
           <li
             v-for="item in tables"
@@ -534,15 +639,29 @@ onBeforeUnmount(() => {
             </button>
             <span class="tag tag-neutral sw-origin">{{ originText(item.origin) }}</span>
           </li>
-          <li v-if="!tables.length && keyword" class="sw-list-empty">没有匹配的表格</li>
         </ul>
 
         <div v-if="tables.length" class="sw-side-foot">
           <template v-if="selected.length">
-            已选 {{ selected.length }} 张
-            <button class="btn-text" @click="selected = []">清空</button>
+            <span class="sw-foot-count">已选 {{ selected.length }} 张</span>
+            <button
+              v-if="selected.length >= 2"
+              type="button"
+              class="btn-text sw-foot-merge"
+              @click="startMergeSelected"
+            >
+              合并
+            </button>
+            <button
+              type="button"
+              class="btn-text btn-text-danger"
+              :disabled="selectedBusy"
+              @click.stop="removeSelected"
+            >
+              {{ selectedBusy ? '删除中…' : '删除' }}
+            </button>
           </template>
-          <template v-else>勾选两张以上，就可以合并</template>
+          <template v-else>勾选后可以合并或删除</template>
         </div>
       </aside>
 
@@ -562,36 +681,47 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="listError" class="banner banner-err">
-          {{ listError }}
-          <button class="btn btn-sm" @click="loadTables()">重试</button>
+        <!-- 报错不在这里占位，统一显示在顶栏下方那条全局提示里 -->
+
+        <!-- 首次进入用骨架屏占位：和空状态同宽同高，数据回来后不会整页跳一下 -->
+        <div v-if="loading && !tables.length" class="panel sw-skeleton" aria-busy="true">
+          <div class="sw-sk-rows">
+            <span class="sw-sk-bar" style="width: 42%"></span>
+            <span class="sw-sk-bar" style="width: 68%"></span>
+            <span class="sw-sk-bar" style="width: 100%"></span>
+            <span class="sw-sk-bar" style="width: 100%"></span>
+            <span class="sw-sk-bar" style="width: 56%"></span>
+          </div>
+          <p class="sw-sk-text">正在读取表格…</p>
         </div>
 
-        <div v-if="loading && !tables.length" class="panel sw-loading">正在读取表格…</div>
-
         <div v-else-if="!tables.length" class="panel sw-empty">
-          <span class="sw-empty-icon"><Icon :name="keyword ? 'search' : 'table'" :size="24" /></span>
-          <b>{{ keyword ? `没有匹配「${keyword}」的表格` : '还没有表格' }}</b>
-          <p v-if="keyword">换个关键词，或者清空搜索看看全部表格。</p>
-          <p v-else>上传一个或多个 Excel，数据都存在本地，随时可以下载。</p>
-          <button v-if="keyword" class="btn" @click="keyword = ''; loadTables()">清空搜索</button>
-          <div
-            v-else
-            class="sw-drop sw-drop-lg"
-            :class="{ 'is-over': dragging, 'is-busy': uploadBusy }"
-            role="button"
-            tabindex="0"
-            @click="pickFiles"
-            @keydown.enter.prevent="pickFiles"
-            @dragenter.prevent="dragging = true"
-            @dragover.prevent="dragging = true"
-            @dragleave.prevent="dragging = false"
-            @drop.prevent="onDrop"
-          >
-            <span class="sw-drop-icon"><Icon name="upload" :size="19" /></span>
-            <b>{{ uploadBusy ? '正在读表…' : '上传 Excel' }}</b>
-            <span class="sw-drop-sub">拖入或点击选择，可多选 · .xlsx / .xls</span>
-          </div>
+          <!-- 已经有搜索词时才需要提示“没搜到”；没上传过表时直接给上传区，不再重复标题 -->
+          <template v-if="keyword">
+            <span class="sw-empty-icon"><Icon name="search" :size="24" /></span>
+            <b>没有匹配「{{ keyword }}」的表格</b>
+            <p>换个关键词，或者清空搜索查看全部表格。</p>
+            <button class="btn" @click="keyword = ''; loadTables()">清空搜索</button>
+          </template>
+          <template v-else>
+            <p class="sw-empty-lead">上传一个或多个 Excel，数据保存在本地，随时可以下载。</p>
+            <div
+              class="sw-drop sw-drop-lg"
+              :class="{ 'is-over': dragging, 'is-busy': uploadBusy }"
+              role="button"
+              tabindex="0"
+              @click="pickFiles"
+              @keydown.enter.prevent="pickFiles"
+              @dragenter.prevent="dragging = true"
+              @dragover.prevent="dragging = true"
+              @dragleave.prevent="dragging = false"
+              @drop.prevent="onDrop"
+            >
+              <span class="sw-drop-icon"><Icon name="upload" :size="19" /></span>
+              <b>{{ uploadBusy ? '正在读表…' : '上传 Excel' }}</b>
+              <span class="sw-drop-sub">拖入或点击选择，可多选 · .xlsx / .xls</span>
+            </div>
+          </template>
         </div>
 
         <div v-else-if="!opened.length" class="panel sw-empty">
@@ -924,20 +1054,19 @@ onBeforeUnmount(() => {
   gap: 4px;
   align-items: center;
   padding: 14px 12px;
-  border: 1px dashed #cfd5df;
+  border: 1px dashed #d5dcea;
   border-radius: 10px;
-  background:
-    repeating-linear-gradient(135deg, rgb(43 95 217 / 2.2%) 0 8px, transparent 8px 16px),
-    #fbfcfe;
+  background: #fbfcfe;
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
 .sw-drop:hover,
 .sw-drop.is-over {
   border-color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: 0 4px 14px rgb(43 95 217 / 8%);
 }
 
 .sw-drop.is-busy {
@@ -951,9 +1080,10 @@ onBeforeUnmount(() => {
   width: 34px;
   height: 34px;
   margin-bottom: 2px;
-  border: 1px solid #d9e2f5;
+  border: 1px solid #e0e6f2;
   border-radius: 9px;
   background: #fff;
+  box-shadow: 0 1px 2px rgb(20 30 50 / 4%);
   color: var(--accent);
 }
 
@@ -981,17 +1111,34 @@ onBeforeUnmount(() => {
 
 .sw-drop-lg {
   width: 100%;
-  max-width: 420px;
-  padding: 24px 16px;
+  max-width: 520px;
+  padding: 40px 22px;
 }
 
 .sw-list {
   flex: 1;
   min-height: 80px;
-  margin: 10px -4px 0;
+  margin: 0 -4px 0;
   padding: 0 4px;
   overflow-y: auto;
   list-style: none;
+}
+
+/* 全选行：只放一个复选框，左边距和列表每行的勾选框对齐，右侧留一条细分隔线 */
+.sw-list-all {
+  display: flex;
+  align-items: center;
+  margin: 6px -4px 0;
+  padding: 4px 4px 5px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.sw-list-all input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .sw-list-item {
@@ -1020,7 +1167,9 @@ onBeforeUnmount(() => {
 .sw-check input {
   width: 13px;
   height: 13px;
+  margin: 0;
   accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .sw-list-main {
@@ -1069,10 +1218,30 @@ onBeforeUnmount(() => {
 }
 
 .sw-side-foot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
   padding: 9px 2px 2px;
   border-top: 1px solid var(--line-soft);
   color: var(--muted);
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.sw-foot-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「合并选中」是这一步真正可点的动作，颜色拉开一点，别再像说明文字 */
+.sw-foot-merge {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sw-foot-merge:hover {
+  color: var(--accent-hover, var(--accent));
+  text-decoration: underline;
 }
 
 /* ---------- 主区 ---------- */
@@ -1104,6 +1273,18 @@ onBeforeUnmount(() => {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+/* 一张表都没有时，顶部工具条与下方输入卡跟空状态卡片同宽居中，避免上下宽度跳变 */
+.sw-layout.is-solo .sw-tools {
+  max-width: 1000px;
+  margin: 0 auto 12px;
+}
+
+.sw-layout.is-solo .sw-compose,
+.sw-layout.is-solo .sw-compose-trigger {
+  max-width: 1000px;
+  margin: 12px auto 0;
 }
 
 /* 展开表格时这里只留一行入口，避免和卡片里的输入框重复 */
@@ -1205,44 +1386,97 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.sw-loading {
-  padding: 40px;
+/* 首次加载的骨架屏：宽度、高度与空状态一致，避免数据回来时页面跳动 */
+.sw-skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  max-width: 1000px;
+  min-height: 420px;
+  margin: 8px auto 0;
+  padding: 56px 40px;
+  box-shadow: 0 1px 2px rgb(20 30 50 / 3%);
+}
+
+.sw-sk-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(420px, 100%);
+}
+
+.sw-sk-bar {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef1f6 25%, #f7f9fc 45%, #eef1f6 65%);
+  background-size: 400% 100%;
+  animation: sw-sk-sweep 1.5s ease-in-out infinite;
+}
+
+.sw-sk-text {
+  margin: 22px 0 0;
   color: var(--muted);
   font-size: 12px;
-  text-align: center;
+}
+
+@keyframes sw-sk-sweep {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
 }
 
 /* ---------- 空状态 ---------- */
+/* 空状态收成一列居中的卡片：内容宽度固定，不随窗口拉满，留白更从容 */
 .sw-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 54px 20px;
+  justify-content: center;
+  max-width: 1000px;
+  min-height: 420px;
+  margin: 8px auto 0;
+  padding: 56px 40px;
   color: var(--muted);
   font-size: 12px;
   text-align: center;
+  box-shadow: 0 1px 2px rgb(20 30 50 / 3%);
 }
 
 .sw-empty-icon {
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
-  margin-bottom: 12px;
-  border-radius: 50%;
-  background: #f2f3f5;
-  color: var(--muted);
+  width: 44px;
+  height: 44px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .sw-empty b {
   color: var(--ink);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 .sw-empty p {
-  max-width: 420px;
-  margin: 6px 0 18px;
+  max-width: 400px;
+  margin: 8px 0 22px;
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+
+/* 没有标题时的说明行：作为上传区的引导语，位置稍靠下 */
+.sw-empty-lead {
+  margin: 4px 0 20px;
+  color: var(--muted);
+  font-size: 12.5px;
   line-height: 1.7;
 }
 

@@ -29,32 +29,49 @@ async function request(path, options = {}) {
     })
   } catch (err) {
     apiState.online = false
-    apiState.lastError = '后端没有响应'
-    throw new ApiError('后端没有连上，请先运行 backend/start.cmd', 0)
+    apiState.lastError = '服务连接中断'
+    throw new ApiError('暂时连不上服务，请检查网络后刷新页面重试', 0)
   }
 
   const type = res.headers.get('content-type') || ''
   // 开发时代理连不上后端会回一个非 JSON 的 5xx，这种不算“后端在跑”
   if (res.status >= 500 && !type.includes('application/json')) {
     apiState.online = false
-    apiState.lastError = '后端没有响应'
+    apiState.lastError = '服务连接中断'
   } else {
     apiState.online = true
   }
 
   if (!res.ok) {
-    let message = `请求失败（${res.status}）`
+    let message = statusText(res.status)
     try {
       const data = await res.json()
+      // 后端自己给的中文提示（比如「至少要两列」）比状态码更好懂，优先用它
       if (data && data.detail) message = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)
     } catch (e) {
-      // 后端返回非 JSON 时保留状态码提示
+      // 后端返回非 JSON 时用上面的通用提示
     }
     throw new ApiError(message, res.status)
   }
 
   if (type.includes('application/json')) return res.json()
   return res
+}
+
+/**
+ * 出错时的中文说明：按市面常见的做法给结论 + 下一步动作，不把状态码丢给用户看。
+ * 400 这类明确是输入问题的，说清「检查什么」；5xx 说「稍后重试」。
+ */
+function statusText(status) {
+  if (status === 400) return '提交的内容有问题，请检查后重试'
+  if (status === 401 || status === 403) return '没有权限执行该操作'
+  if (status === 404) return '内容不存在，可能已被删除'
+  if (status === 409) return '数据已变化，请刷新后重试'
+  if (status === 413) return '文件太大，请压缩后重新上传'
+  if (status === 415) return '文件格式不支持，请换一个文件'
+  if (status === 429) return '操作太频繁，请稍等一下再试'
+  if (status >= 500) return '服务出了点问题，请稍后重试'
+  return '操作没有成功，请稍后重试'
 }
 
 function query(params = {}) {
@@ -122,8 +139,13 @@ export const api = {
     return request('/api/ops/self-check')
   },
 
-  auditLogs(limit = 40) {
-    return request(`/api/ops/audit${query({ limit })}`)
+  // 运行记录与审计日志都走服务端分页，本地各留 100 条
+  agentRuns(page = 1, pageSize = 10) {
+    return request(`/api/ops/runs${query({ page, page_size: pageSize })}`)
+  },
+
+  auditLogs(page = 1, pageSize = 20) {
+    return request(`/api/ops/audit${query({ page, page_size: pageSize })}`)
   },
 
   prepareDemo(preset) {
@@ -205,6 +227,14 @@ export const api = {
     })
   },
 
+  // 清理最近记录：ids 为空数组表示清空全部；返回删除条数与剩余列表
+  bridgeDelete(ids = []) {
+    return request('/api/bridge/datasets/delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    })
+  },
+
   bridgeRun(id) {
     return request(`/api/bridge/datasets/${encodeURIComponent(id)}/run`, { method: 'POST' })
   },
@@ -241,13 +271,26 @@ export const api = {
     return request(`/api/sheets${query(params)}`)
   },
 
+  // 仓库列表服务端分页（一页 10 张），同时返回全库汇总
+  sheetPage({ page = 1, pageSize = 10, q = '' } = {}) {
+    return request(`/api/sheets/page${query({ page, page_size: pageSize, q })}`)
+  },
+
   sheetTemplates() {
     return request('/api/sheets/templates')
   },
 
-  // 所有表格的操作日志，按时间倒序
-  sheetLogs(limit = 60) {
-    return request(`/api/sheets/logs${query({ limit })}`)
+  // 所有表格的操作日志，按时间倒序分页；服务端只保留最近 100 条
+  sheetLogs(page = 1, pageSize = 10) {
+    return request(`/api/sheets/logs${query({ page, page_size: pageSize })}`)
+  },
+
+  // 删日志：传 ids 只删选中的，传空数组清空全部
+  deleteSheetLogs(ids = []) {
+    return request('/api/sheets/logs/delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    })
   },
 
   sheet(id) {
@@ -329,6 +372,11 @@ export const api = {
 
   deleteSheet(id) {
     return request(`/api/sheets/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  },
+
+  // 批量删除：仓库列表勾选多张后一次删掉
+  deleteSheets(ids = []) {
+    return request('/api/sheets/delete', { method: 'POST', body: JSON.stringify({ ids }) })
   },
 
   sheetDownloadUrl(id) {

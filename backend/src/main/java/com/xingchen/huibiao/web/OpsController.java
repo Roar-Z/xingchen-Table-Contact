@@ -54,9 +54,17 @@ public class OpsController {
         return tools.list();
     }
 
+    @GetMapping("/runs")
+    public Map<String, Object> runs(@RequestParam(value = "page", defaultValue = "1") int page,
+                                    @RequestParam(value = "page_size", defaultValue = "10") int pageSize) {
+        return runs.page(page, pageSize);
+    }
+
+    /** 审计日志分页：本地最多留 100 条，默认每页 20 条。 */
     @GetMapping("/audit")
-    public List<Map<String, Object>> audit(@RequestParam(value = "limit", defaultValue = "40") int limit) {
-        return audit.recent(limit);
+    public Map<String, Object> audit(@RequestParam(value = "page", defaultValue = "1") int page,
+                                     @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
+        return audit.page(page, pageSize);
     }
 
     /**

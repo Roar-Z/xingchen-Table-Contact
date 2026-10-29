@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>汇表 · 接口文档</title>
+<style>
+  :root {
+    --paper: #ffffff;
+    --paper-2: #fafbfc;
+    --ink: #1f2329;
+    --ink-2: #4e5969;
+    --muted: #86909c;
+    --line: #e2e5ea;
+    --line-soft: #eef0f3;
+    --pine: #2b5fd9;
+    --pine-soft: #eef3ff;
+    --brick: #c0392b;
+    --amber: #a96400;
+    --blue: #2b5fd9;
+    --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", "Courier New", monospace;
+    --ui: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.75;
+  }
+  a { color: var(--pine); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); font-size: 12px; background: #f2f3f5; padding: 1px 5px; border-radius: 3px; }
+  pre { margin: 0; }
+
+  .shell { display: flex; min-height: 100vh; }
+  .nav {
+    width: 232px; flex: none;
+    border-right: 1px solid var(--line);
+    background: var(--paper);
+    padding: 24px 16px 36px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; padding: 0 6px; }
+  .brand-mark {
+    width: 26px; height: 26px; border-radius: 6px; background: var(--pine); color: #fff;
+    display: grid; place-items: center; font-size: 13px; font-weight: 600;
+  }
+  .brand b { font-size: 14px; font-weight: 600; }
+  .brand small { display: block; font-size: 11px; color: var(--muted); }
+  .nav-title {
+    margin: 20px 0 6px; padding: 0 8px; font-size: 11px; color: var(--muted);
+    font-weight: 600;
+  }
+  .nav a {
+    display: block; padding: 5px 8px; border-radius: 4px;
+    color: var(--ink-2); font-size: 12.5px;
+  }
+  .nav a:hover { background: var(--pine-soft); color: var(--pine); text-decoration: none; }
+  .nav .badge { float: right; font-size: 10px; color: var(--muted); }
+
+  main { flex: 1; min-width: 0; padding: 40px clamp(24px, 5vw, 64px) 90px; }
+  .doc { max-width: 860px; }
+  .eyebrow { font-size: 12px; color: var(--muted); }
+  h1 { font-size: 26px; line-height: 1.35; margin: 6px 0 10px; font-weight: 600; }
+  .lead { color: var(--ink-2); max-width: 680px; margin: 0 0 28px; }
+  h2 {
+    font-size: 18px; margin: 44px 0 14px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
+    font-weight: 600; scroll-margin-top: 20px;
+  }
+  h3 { font-size: 14px; margin: 24px 0 8px; font-weight: 600; }
+  p { margin: 8px 0; color: var(--ink-2); }
+
+  .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin: 22px 0 8px; }
+  .meta { border: 1px solid var(--line); background: var(--paper-2); padding: 9px 12px; border-radius: 6px; }
+  .meta span { display: block; font-size: 11px; color: var(--muted); }
+  .meta b { font-size: 12.5px; font-weight: 500; color: var(--ink); word-break: break-all; }
+
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 14px 0 6px; }
+  .flow-step {
+    border: 1px solid var(--line); background: var(--paper-2); padding: 4px 10px; border-radius: 4px;
+    font-size: 12px; color: var(--ink-2);
+  }
+  .flow-step b { color: var(--pine); font-size: 11px; margin-right: 5px; }
+  .flow-arrow { color: var(--muted); font-size: 12px; }
+
+  .endpoint {
+    border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+    margin: 14px 0 22px; overflow: hidden;
+  }
+  .endpoint-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; background: var(--paper-2); }
+  .method {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    padding: 1px 7px; border-radius: 3px; color: #fff; background: var(--pine);
+  }
+  .method.get { background: #2b5fd9; }
+  .method.post { background: #1f7a4d; }
+  .method.put { background: var(--amber); }
+  .method.delete { background: var(--brick); }
+  .path { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+  .endpoint-head .desc { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .endpoint-body { padding: 12px 14px 14px; }
+  .endpoint-body > p:first-child { margin-top: 0; }
+  .endpoint-body > p:last-child { margin-bottom: 0; }
+
+  .params { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 12.5px; }
+  .params th, .params td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  .params th { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  .params td:first-child { font-family: var(--mono); color: var(--ink); white-space: nowrap; }
+  .req { color: var(--brick); font-family: var(--mono); font-size: 10px; }
+
+  pre.code {
+    background: #fafbfc; color: #24292f; border: 1px solid var(--line-soft); border-radius: 6px; padding: 12px 14px;
+    overflow-x: auto; font-family: var(--mono); font-size: 11.5px; line-height: 1.85; margin: 10px 0;
+  }
+  pre.code .k { color: #1f4db8; }
+  pre.code .s { color: #1f7a4d; }
+  pre.code .c { color: #86909c; }
+
+  .note {
+    border-left: 2px solid var(--amber); background: #fff8ec; padding: 8px 12px;
+    font-size: 12.5px; color: #7a4f0c; margin: 12px 0; border-radius: 0 4px 4px 0;
+  }
+  .note b { font-weight: 600; }
+  .note.pine { border-color: var(--pine); background: var(--pine-soft); color: #1f4db8; }
+
+  .status-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 10px 0; }
+  .status-table th, .status-table td { border-bottom: 1px solid var(--line-soft); padding: 7px 10px; text-align: left; }
+  .status-table th { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 1px 8px;
+    border-radius: 9px; border: 1px solid var(--line); color: var(--ink-2); background: #fff;
+  }
+  .pill.done { color: var(--ok, #1f7a4d); border-color: #b9dcc9; background: #edf6f1; }
+  .pill.warning { color: #83601f; border-color: #e6d3a6; background: #fdf6e7; }
+  .pill.failed { color: #a63a2b; border-color: #ecc3ba; background: #fdeeeb; }
+  .pill.running { color: #1f4db8; border-color: #c7d6f5; background: #eef3ff; }
+
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 820px) {
+    .nav { display: none; }
+    main { padding: 26px 20px 60px; }
+    h1 { font-size: 22px; }
+    .endpoint-head .desc { margin-left: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="nav">
+    <div class="brand">
+      <div class="brand-mark">汇</div>
+      <div><b>汇表</b><small>接口文档</small></div>
+    </div>
+    <div class="nav-title">起步</div>
+    <a href="#overview">概览</a>
+    <a href="#flow">处理流程</a>
+    <a href="#convention">通用约定</a>
+    <a href="#errors">错误格式</a>
+    <div class="nav-title">接口</div>
+    <a href="#health">健康检查 <span class="badge">GET</span></a>
+    <a href="#upload">上传源表 <span class="badge">POST</span></a>
+    <a href="#demo">示例数据 <span class="badge">POST</span></a>
+    <a href="#analyze">解析任务描述 <span class="badge">POST</span></a>
+    <a href="#preview">试算 <span class="badge">POST</span></a>
+    <a href="#create">创建任务 <span class="badge">POST</span></a>
+    <a href="#list">任务列表 <span class="badge">GET</span></a>
+    <a href="#detail">任务详情 <span class="badge">GET</span></a>
+    <a href="#download">下载产出 <span class="badge">GET</span></a>
+    <div class="nav-title">数据对象</div>
+    <a href="#obj-file">FileMeta</a>
+    <a href="#obj-intent">IntentResult</a>
+    <a href="#obj-task">TaskRecord</a>
+    <a href="#obj-anomaly">Anomaly</a>
+    <div class="nav-title">其他</div>
+    <a href="/docs/product.html">产品设计文档</a>
+    <a href="/docs/dev.html">开发文档</a>
+    <a href="/docs/design.html">设计说明</a>
+    <a href="/">打开系统</a>
+  </nav>
+
+  <main>
+    <div class="doc">
+      <div class="eyebrow">星尘汇表智联 · 2026 东莞百景大赛</div>
+      <h1>汇表后端接口文档</h1>
+      <p class="lead">
+        这一页是前后端联调时对照用的，字段名、参数和响应都以这里为准。接口按资源划分，
+        除上传外都是 JSON，字段统一用下划线命名，和前端代码里的写法保持一致。
+      </p>
+
+      <div class="meta-grid">
+        <div class="meta"><span>BASE URL</span><b>http://127.0.0.1:8000</b></div>
+        <div class="meta"><span>API PREFIX</span><b>/api</b></div>
+        <div class="meta"><span>ENCODING</span><b>UTF-8 / JSON</b></div>
+        <div class="meta"><span>BACKEND</span><b>Spring Boot 3.4.5</b></div>
+        <div class="meta"><span>INTENT</span><b>LangChain4j 1.0.0（可选）</b></div>
+        <div class="meta"><span>STORAGE</span><b>data/*.json</b></div>
+      </div>
+
+      <h2 id="overview">概览</h2>
+      <p>
+        后端只做四件事：把表格读成行、把字段对齐、按业务规则算、把结果写成 HR 能导入的文件。
+        所有数值计算都在 Java 里完成，大模型只在需要的时候帮忙判断“这句话是请假结算还是加班筛选”，不参与算数。
+      </p>
+      <p>
+        当前版本没有登录和权限体系，默认只监听本机 <code>127.0.0.1:8000</code>，数据落在 <code>backend/data</code>，
+        适合内网单机演示。真正部署到厂区时，建议在前面加一层网关做鉴权和访问日志。
+      </p>
+
+      <h2 id="flow">处理流程</h2>
+      <div class="flow">
+        <span class="flow-step"><b>01</b>上传源表</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>02</b>解析描述</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>03</b>确认映射</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>04</b>试算</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>05</b>创建任务</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>06</b>轮询进度</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step"><b>07</b>下载文件</span>
+      </div>
+      <p>
+        第 4 步和第 5 步走的是同一套处理代码，试算只是不落文件、不写任务记录，避免出现“预览能过、正式执行报错”的情况。
+        任务创建后由 <code>taskExecutor</code> 线程池异步执行，前端每 1.3 秒拉一次详情即可。
+      </p>
+
+      <h2 id="convention">通用约定</h2>
+      <table class="params">
+        <tr><th>约定</th><th>说明</th></tr>
+        <tr><td>命名</td><td>请求和响应字段一律 <code>snake_case</code>，例如 <code>file_id</code>、<code>output_rows</code>。</td></tr>
+        <tr><td>时间</td><td>任务时间精确到秒，格式 <code>yyyy-MM-dd HH:mm:ss</code>；预览耗时用毫秒整数。</td></tr>
+        <tr><td>文件</td><td>支持 <code>.xlsx</code>、<code>.xls</code>、<code>.csv</code>，单文件 30MB 以内，一次最多 60MB。</td></tr>
+        <tr><td>编码</td><td>CSV 优先按 UTF-8 读，出现乱码时自动退回 GBK。</td></tr>
+        <tr><td>源文件</td><td>上传后复制到 <code>data/uploads</code>，处理时只读，不会改原表。</td></tr>
+        <tr><td>产出文件</td><td>每个任务一个目录：<code>data/outputs/{task_id}/</code>，同名文件互不覆盖。</td></tr>
+      </table>
+
+      <h2 id="errors">错误格式</h2>
+      <p>所有业务异常都返回统一的 JSON，前端直接读 <code>detail</code> 展示即可。</p>
+      <pre class="code">{
+  <span class="k">"detail"</span>: <span class="s">"工号 E11004 在年假余额表中不存在，按 0 年假处理并输出事假"</span>
+}</pre>
+      <table class="status-table">
+        <tr><th>状态码</th><th>场景</th></tr>
+        <tr><td>200</td><td>正常返回，任务创建成功也返回 200。</td></tr>
+        <tr><td>400</td><td>参数缺失、文件格式不支持、描述识别不出场景。</td></tr>
+        <tr><td>404</td><td>任务编号不存在。</td></tr>
+        <tr><td>409</td><td>文件已被清理、产出文件不存在等状态冲突。</td></tr>
+        <tr><td>500</td><td>未预期的服务端异常，详情看后端控制台日志。</td></tr>
+      </table>
+
+      <h2 id="health">健康检查</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/health</span>
+          <span class="desc">侧边栏连接状态和启动自检</span>
+        </div>
+        <div class="endpoint-body">
+          <p>确认服务在线、当前解析模式和任务数量。</p>
+          <pre class="code">{
+  <span class="k">"status"</span>: <span class="s">"ok"</span>,
+  <span class="k">"version"</span>: <span class="s">"0.8.2"</span>,
+  <span class="k">"time"</span>: <span class="s">"2026-10-27 21:21:27"</span>,
+  <span class="k">"llm_enabled"</span>: false,
+  <span class="k">"parser"</span>: <span class="s">"rules"</span>,
+  <span class="k">"tasks"</span>: 2
+}</pre>
+        </div>
+      </div>
+
+      <h2 id="upload">上传源表</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/files/upload</span>
+          <span class="desc">multipart/form-data</span>
+        </div>
+        <div class="endpoint-body">
+          <table class="params">
+            <tr><th>字段</th><th>位置</th><th>说明</th></tr>
+            <tr><td>file <span class="req">必填</span></td><td>form</td><td>表格文件，支持 xlsx / xls / csv。</td></tr>
+            <tr><td>role</td><td>form</td><td><code>auto</code>（默认）、<code>leave_request</code>、<code>annual_balance</code>、<code>overtime</code>、<code>target_template</code>、<code>unknown</code>。</td></tr>
+          </table>
+          <p>返回文件的表头、工作表信息、角色识别结果和一列样例值，前端用这些信息展示“第几行是表头”。</p>
+          <pre class="code">curl -F <span class="s">"file=@OA导出请假单.xlsx"</span> -F <span class="s">"role=auto"</span> \
+  http://127.0.0.1:8000/api/files/upload</pre>
+          <pre class="code">{
+  <span class="k">"file_id"</span>: <span class="s">"Faf1b12df71"</span>,
+  <span class="k">"name"</span>: <span class="s">"OA导出请假单.xlsx"</span>,
+  <span class="k">"ext"</span>: <span class="s">".xlsx"</span>,
+  <span class="k">"size"</span>: 6803,
+  <span class="k">"role"</span>: <span class="s">"leave_request"</span>,
+  <span class="k">"role_label"</span>: <span class="s">"OA 请假单"</span>,
+  <span class="k">"header_row"</span>: 1,
+  <span class="k">"sheets"</span>: [{ <span class="k">"name"</span>: <span class="s">"Sheet1"</span>, <span class="k">"rows"</span>: 13, <span class="k">"columns"</span>: 14 }],
+  <span class="k">"columns"</span>: [<span class="s">"请求标题"</span>, <span class="s">"工号"</span>, <span class="s">"申请人"</span>, <span class="s">"部门"</span>],
+  <span class="k">"sample"</span>: { <span class="k">"工号"</span>: <span class="s">"E11004"</span> }
+}</pre>
+          <div class="note">年假表的第 1 行是“2026年休假明细 2月”这样的标题，<code>header_row</code> 会是 2。业务代码不用自己处理，解析时按这个行号往下找即可。</div>
+        </div>
+      </div>
+
+      <h2 id="demo">示例数据</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/demo/prepare</span>
+          <span class="desc">把比赛样例表登记成可处理的源文件</span>
+        </div>
+        <div class="endpoint-body">
+          <table class="params">
+            <tr><th>字段</th><th>说明</th></tr>
+            <tr><td>preset</td><td><code>leave</code> 返回 OA 请假单 + 年假余额 + HR 缺勤模板；<code>overtime</code> 返回 ERP 加班表 + HR 加班模板。</td></tr>
+          </table>
+          <pre class="code">POST /api/demo/prepare
+{ <span class="k">"preset"</span>: <span class="s">"leave"</span> }</pre>
+          <p>返回的 <code>files</code> 结构和上传接口完全一致，可以直接放进解析、试算、创建任务的 <code>files</code> 参数里；<code>template</code> 是样例里配的 HR 导入模板，<code>template_file_id</code> 直接传给 <code>config</code> 就能按它出列。</p>
+          <pre class="code">{
+  <span class="k">"name"</span>: <span class="s">"OA 请假单转 HR 缺勤"</span>,
+  <span class="k">"brief"</span>: <span class="s">"把 OA 导出的请假单和年假余额表按工号关联……"</span>,
+  <span class="k">"files"</span>: [ { <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"role"</span>: <span class="s">"leave_request"</span> }, ... ],
+  <span class="k">"template_file_id"</span>: <span class="s">"Fbab15fe685"</span>,
+  <span class="k">"template"</span>: { <span class="k">"name"</span>: <span class="s">"HR 系统需要最低版本导入.xls"</span>, <span class="k">"role"</span>: <span class="s">"target_template"</span>, <span class="k">"columns"</span>: [<span class="s">"工号"</span>, <span class="s">"姓名"</span>, ...] }
+}</pre>
+        </div>
+      </div>
+
+      <h2 id="analyze">解析任务描述</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/tasks/analyze</span>
+          <span class="desc">自然语言 → 可执行配置</span>
+        </div>
+        <div class="endpoint-body">
+          <pre class="code">{
+  <span class="k">"brief"</span>: <span class="s">"把 OA 请假单和年假余额按工号关联，先扣年假，不够的转事假"</span>,
+  <span class="k">"files"</span>: [
+    { <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"role"</span>: <span class="s">"leave_request"</span> },
+    { <span class="k">"file_id"</span>: <span class="s">"F91ec597e0f"</span>, <span class="k">"role"</span>: <span class="s">"annual_balance"</span> }
+  ],
+  <span class="k">"template_file_id"</span>: <span class="s">"Fbab15fe685"</span>
+}</pre>
+          <p>能识别场景、关联键、部门、日期区间和字段映射建议。解析失败会返回 400，并说明没看懂哪一部分。传了 <code>template_file_id</code> 时，<code>target_template.columns</code> 直接取自该模板表头（<code>built_in=false</code>），不传则用内置模板。</p>
+          <pre class="code">{
+  <span class="k">"scene"</span>: <span class="s">"leave"</span>,
+  <span class="k">"scene_name"</span>: <span class="s">"假期余量结算"</span>,
+  <span class="k">"confidence"</span>: 0.88,
+  <span class="k">"parser"</span>: <span class="s">"rules"</span>,
+  <span class="k">"join_keys"</span>: [<span class="s">"工号"</span>],
+  <span class="k">"filters"</span>: [<span class="s">"日期 2026-04-01 至 2026-04-30"</span>, <span class="s">"部门 = 总装车间"</span>],
+  <span class="k">"calculation"</span>: <span class="s">"按工号关联年假余额，先扣年假，超出部分转事假；天数 × 8 小时"</span>,
+  <span class="k">"target_template"</span>: {
+    <span class="k">"id"</span>: <span class="s">"tpl_absence"</span>,
+    <span class="k">"name"</span>: <span class="s">"HR 最低版本导入模板（缺勤）"</span>,
+    <span class="k">"columns"</span>: [<span class="s">"工号"</span>, <span class="s">"姓名"</span>, <span class="s">"部门"</span>, <span class="s">"缺勤类别"</span>, <span class="s">"起始时间"</span>, <span class="s">"终止时间"</span>, <span class="s">"合计小时"</span>, <span class="s">"免打卡"</span>]
+  },
+  <span class="k">"notes"</span>: [<span class="s">"请假单里有 6 个工号在年假表中找不到，会按 0 年假处理并写入异常日志。"</span>],
+  <span class="k">"mapping"</span>: [
+    { <span class="k">"target"</span>: <span class="s">"工号"</span>, <span class="k">"required"</span>: true, <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"column"</span>: <span class="s">"工号"</span>, <span class="k">"confidence"</span>: 0.96 }
+  ],
+  <span class="k">"source_columns"</span>: [
+    { <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"name"</span>: <span class="s">"OA导出请假单.xlsx"</span>, <span class="k">"columns"</span>: [<span class="s">"工号"</span>, <span class="s">"申请人"</span>], <span class="k">"sample"</span>: { <span class="k">"工号"</span>: <span class="s">"E11004"</span> } }
+  ]
+}</pre>
+          <div class="note pine">配置了 <code>HUBIAO_LLM_ENABLED=1</code> 时，规则识别把握低于 0.8 才会问一次模型；模型只返回场景和一句提示，<code>parser</code> 会变成 <code>rules+langchain4j</code>。</div>
+        </div>
+      </div>
+
+      <h2 id="preview">试算</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/tasks/preview</span>
+          <span class="desc">dry run，不写文件、不落任务</span>
+        </div>
+        <div class="endpoint-body">
+          <pre class="code">{
+  <span class="k">"brief"</span>: <span class="s">"把 OA 请假单和年假余额按工号关联，先扣年假，不够的转事假"</span>,
+  <span class="k">"files"</span>: [
+    { <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"role"</span>: <span class="s">"leave_request"</span> },
+    { <span class="k">"file_id"</span>: <span class="s">"F91ec597e0f"</span>, <span class="k">"role"</span>: <span class="s">"annual_balance"</span> }
+  ],
+  <span class="k">"config"</span>: {
+    <span class="k">"scene"</span>: <span class="s">"leave"</span>,
+    <span class="k">"template_file_id"</span>: <span class="s">"Fbab15fe685"</span>,
+    <span class="k">"isolate_anomaly"</span>: true,
+    <span class="k">"strict_format"</span>: false,
+    <span class="k">"mapping"</span>: [
+      { <span class="k">"target"</span>: <span class="s">"工号"</span>, <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"column"</span>: <span class="s">"工号"</span> },
+      { <span class="k">"target"</span>: <span class="s">"缺勤类别"</span>, <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"column"</span>: <span class="s">"请假类型"</span> }
+    ]
+  }
+}</pre>
+          <p><code>mapping</code> 只传用户确认过的字段即可，没传的由系统按表头词典自动匹配。<code>column</code> 填 <code>null</code> 表示这一列由系统计算（例如缺勤类别、合计小时、免打卡）。</p>
+          <table class="params">
+            <tr><th>config 字段</th><th>默认</th><th>说明</th></tr>
+            <tr><td>scene</td><td>自动推断</td><td><code>leave</code> / <code>overtime</code>。</td></tr>
+            <tr><td>template_file_id</td><td>空</td><td>目标模板编号，导出列名与顺序和模板表头一致。</td></tr>
+            <tr><td>isolate_anomaly</td><td><code>true</code></td><td>脏数据隔离。关闭后问题行照常输出，只在 <code>warnings</code> 里统计条数。</td></tr>
+            <tr><td>strict_format</td><td><code>false</code></td><td>严格格式校验。开启后模板缺列、必填缺失直接报错终止。</td></tr>
+          </table>
+          <pre class="code">{
+  <span class="k">"elapsed_ms"</span>: 421,
+  <span class="k">"scene"</span>: <span class="s">"leave"</span>,
+  <span class="k">"scene_name"</span>: <span class="s">"假期余量结算"</span>,
+  <span class="k">"target"</span>: <span class="s">"HR 最低版本导入模板（缺勤）"</span>,
+  <span class="k">"stats"</span>: [
+    { <span class="k">"key"</span>: <span class="s">"source_rows"</span>, <span class="k">"label"</span>: <span class="s">"源表行数"</span>, <span class="k">"value"</span>: <span class="s">"13"</span>, <span class="k">"unit"</span>: <span class="s">"行"</span>, <span class="k">"warn"</span>: false },
+    { <span class="k">"key"</span>: <span class="s">"annual_hours"</span>, <span class="k">"label"</span>: <span class="s">"年假抵扣"</span>, <span class="k">"value"</span>: <span class="s">"46"</span>, <span class="k">"unit"</span>: <span class="s">"小时"</span>, <span class="k">"warn"</span>: false }
+  ],
+  <span class="k">"output_columns"</span>: [<span class="s">"工号"</span>, <span class="s">"姓名"</span>, <span class="s">"部门"</span>, <span class="s">"缺勤类别"</span>, <span class="s">"起始时间"</span>, <span class="s">"终止时间"</span>, <span class="s">"合计小时"</span>, <span class="s">"免打卡"</span>],
+  <span class="k">"preview"</span>: [
+    { <span class="k">"工号"</span>: <span class="s">"E10192"</span>, <span class="k">"缺勤类别"</span>: <span class="s">"年假"</span>, <span class="k">"合计小时"</span>: 2, <span class="k">"免打卡"</span>: <span class="s">"是"</span> }
+  ],
+  <span class="k">"total_preview"</span>: 13,
+  <span class="k">"output_rows"</span>: 13,
+  <span class="k">"anomaly_rows"</span>: 6,
+  <span class="k">"anomalies"</span>: [ { <span class="k">"row"</span>: 2, <span class="k">"source"</span>: <span class="s">"OA导出请假单.xlsx"</span>, <span class="k">"type"</span>: <span class="s">"年假缺失"</span>, <span class="k">"reason"</span>: <span class="s">"工号 E11004 在年假余额表中不存在"</span>, <span class="k">"raw"</span>: <span class="s">"06.职员请假单-精工二-04-28 / E11004"</span> } ],
+  <span class="k">"warnings"</span>: [<span class="s">"有 6 条请假的工号在年假表里找不到，已经按 0 余额输出事假。"</span>],
+  <span class="k">"rules"</span>: { <span class="k">"workday_hours"</span>: 8.0, <span class="k">"annual_priority"</span>: true, <span class="k">"date_style"</span>: <span class="s">"M/D/YY"</span>, <span class="k">"anomaly_threshold"</span>: 20.0 }
+}</pre>
+          <div class="note">预览最多返回前 20 行，完整结果在正式执行后写进文件。<code>stats[].value</code> 是带千分位的字符串，方便前端直接展示。</div>
+        </div>
+      </div>
+
+      <h2 id="create">创建任务</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method post">POST</span>
+          <span class="path">/api/tasks</span>
+          <span class="desc">排队并异步执行</span>
+        </div>
+        <div class="endpoint-body">
+          <pre class="code">{
+  <span class="k">"name"</span>: <span class="s">"OA 请假单转 HR 缺勤（4 月）"</span>,
+  <span class="k">"brief"</span>: <span class="s">"把 OA 请假单和年假余额按工号关联，先扣年假，不够的转事假"</span>,
+  <span class="k">"files"</span>: [ ... ],
+  <span class="k">"config"</span>: { <span class="k">"scene"</span>: <span class="s">"leave"</span>, <span class="k">"template_file_id"</span>: <span class="s">"Fbab15fe685"</span>, <span class="k">"isolate_anomaly"</span>: true, <span class="k">"strict_format"</span>: false, <span class="k">"mapping"</span>: [ ... ] }
+}</pre>
+          <p>立即返回任务快照，<code>status</code> 为 <code>queued</code>。之后每 1.3 秒调用详情接口，进度会从 10 走到 100。</p>
+          <pre class="code">{
+  <span class="k">"id"</span>: <span class="s">"T20261027-0003"</span>,
+  <span class="k">"status"</span>: <span class="s">"queued"</span>,
+  <span class="k">"progress"</span>: 5,
+  <span class="k">"created_at"</span>: <span class="s">"2026-10-27 21:30:01"</span>,
+  <span class="k">"source_files"</span>: [
+    { <span class="k">"file_id"</span>: <span class="s">"F1510e5d91c"</span>, <span class="k">"name"</span>: <span class="s">"OA导出请假单.xlsx"</span>, <span class="k">"role"</span>: <span class="s">"OA 请假单"</span>, <span class="k">"rows"</span>: 13 }
+  ],
+  <span class="k">"artifacts"</span>: [],
+  <span class="k">"logs"</span>: [ { <span class="k">"time"</span>: <span class="s">"21:30:01"</span>, <span class="k">"level"</span>: <span class="s">"info"</span>, <span class="k">"message"</span>: <span class="s">"任务已进入队列"</span> } ]
+}</pre>
+          <h3>任务状态</h3>
+          <table class="status-table">
+            <tr><th>状态</th><th>含义</th><th>是否有产出文件</th></tr>
+            <tr><td><span class="pill running">queued</span></td><td>刚创建，等待线程池。</td><td>否</td></tr>
+            <tr><td><span class="pill running">running</span></td><td>正在读表、计算或写文件。</td><td>否</td></tr>
+            <tr><td><span class="pill done">done</span></td><td>完成，没有异常行。</td><td>是</td></tr>
+            <tr><td><span class="pill warning">warning</span></td><td>完成，但有异常行或提示需要复核。</td><td>是</td></tr>
+            <tr><td><span class="pill failed">failed</span></td><td>执行失败，或筛选后没有数据。</td><td>否</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <h2 id="list">任务列表</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/tasks</span>
+          <span class="desc">分页、状态筛选、关键词搜索</span>
+        </div>
+        <div class="endpoint-body">
+          <table class="params">
+            <tr><th>参数</th><th>说明</th></tr>
+            <tr><td>status</td><td><code>all</code> / <code>done</code> / <code>running</code> / <code>warning</code> / <code>failed</code>，不传等同 all。<code>running</code> 会把 queued 一起算进来。</td></tr>
+            <tr><td>q</td><td>按任务名称或编号模糊搜索。</td></tr>
+            <tr><td>page</td><td>页码，从 1 开始，默认 1。</td></tr>
+            <tr><td>page_size</td><td>每页条数，默认 10，最大 100。</td></tr>
+          </table>
+          <pre class="code">{
+  <span class="k">"total"</span>: 2,
+  <span class="k">"page"</span>: 1,
+  <span class="k">"page_size"</span>: 10,
+  <span class="k">"counts"</span>: { <span class="k">"all"</span>: 2, <span class="k">"done"</span>: 1, <span class="k">"running"</span>: 0, <span class="k">"warning"</span>: 1, <span class="k">"failed"</span>: 0 },
+  <span class="k">"items"</span>: [
+    {
+      <span class="k">"id"</span>: <span class="s">"T20261027-0002"</span>,
+      <span class="k">"name"</span>: <span class="s">"总装车间 4 月加班汇总"</span>,
+      <span class="k">"scene"</span>: <span class="s">"overtime"</span>,
+      <span class="k">"scene_name"</span>: <span class="s">"加班记录桥接"</span>,
+      <span class="k">"status"</span>: <span class="s">"done"</span>,
+      <span class="k">"progress"</span>: 100,
+      <span class="k">"source_count"</span>: 1,
+      <span class="k">"total_rows"</span>: 36001,
+      <span class="k">"output_rows"</span>: 4597,
+      <span class="k">"anomaly_rows"</span>: 0,
+      <span class="k">"duration_ms"</span>: 3015,
+      <span class="k">"created_at"</span>: <span class="s">"2026-10-27 21:21:22"</span>
+    }
+  ]
+}</pre>
+        </div>
+      </div>
+
+      <h2 id="detail">任务详情</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/tasks/{id}</span>
+          <span class="desc">前端每 1.3 秒轮询</span>
+        </div>
+        <div class="endpoint-body">
+          <p>返回任务完整快照，包含预览、异常日志、处理日志、配置快照和产出文件。字段说明见 <a href="#obj-task">TaskRecord</a>。</p>
+          <div class="note">任务不存在返回 404，前端会显示“没有找到这个任务”，而不是退回演示数据。</div>
+        </div>
+      </div>
+
+      <h2 id="download">下载产出</h2>
+      <div class="endpoint">
+        <div class="endpoint-head">
+          <span class="method get">GET</span>
+          <span class="path">/api/tasks/{id}/download/{artifact}</span>
+          <span class="desc">浏览器直接打开即可</span>
+        </div>
+        <div class="endpoint-body">
+          <p><code>artifact</code> 就是任务详情里 <code>artifacts[].name</code>，需要 URL 编码。后端只会下载任务记录里登记过的文件，防止路径穿越。</p>
+          <pre class="code">GET /api/tasks/T20261027-0001/download/HR%E5%AF%BC%E5%85%A5_%E7%BC%BA%E5%8B%A4_20261027.xls</pre>
+          <p>响应头带 <code>Content-Disposition: attachment; filename*=UTF-8''...</code>，中文文件名不会乱码。</p>
+        </div>
+      </div>
+
+      <h2 id="obj-file">FileMeta（文件）</h2>
+      <table class="params">
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td>file_id</td><td>系统生成的文件编号，后续请求都用它引用文件。</td></tr>
+        <tr><td>name</td><td>上传时的原始文件名。</td></tr>
+        <tr><td>ext / size</td><td>扩展名和字节数。</td></tr>
+        <tr><td>role / role_label</td><td>业务角色代码和中文名，可在上传时指定，也可自动识别。</td></tr>
+        <tr><td>header_row</td><td>表头所在行号，从 1 开始。</td></tr>
+        <tr><td>sheets / columns / sample</td><td>工作表概况、表头列名、每列一个样例值。</td></tr>
+      </table>
+
+      <h2 id="obj-intent">IntentResult（解析结果）</h2>
+      <table class="params">
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td>scene / scene_name</td><td><code>leave</code> 假期余量结算，<code>overtime</code> 加班记录桥接。</td></tr>
+        <tr><td>confidence / parser</td><td>把握程度和解析来源（rules / rules+langchain4j）。</td></tr>
+        <tr><td>join_keys / filters</td><td>关联键和识别出的筛选条件，给前端展示用。</td></tr>
+        <tr><td>target_template</td><td>输出模板对象，含列名和顺序。</td></tr>
+        <tr><td>mapping</td><td>每个目标字段的建议来源，含把握程度。</td></tr>
+        <tr><td>source_columns</td><td>每张源表的表头和样例值，字段映射页的下拉框用它渲染。</td></tr>
+        <tr><td>notes</td><td>给业务人员看的提醒，比如年假表标题行、缺失工号数量。</td></tr>
+      </table>
+
+      <h2 id="obj-task">TaskRecord（任务快照）</h2>
+      <table class="params">
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td>id / name</td><td>任务编号（TyyyyMMdd-0001）和任务名称。</td></tr>
+        <tr><td>status / progress</td><td>queued / running / done / warning / failed，进度 0–100。</td></tr>
+        <tr><td>total_rows / output_rows / anomaly_rows</td><td>源表行数、输出行数、隔离异常行数。</td></tr>
+        <tr><td>duration_ms / created_at / finished_at</td><td>耗时和起止时间。</td></tr>
+        <tr><td>source_files</td><td>参与本次任务的源文件，含角色和行数。</td></tr>
+        <tr><td>artifacts</td><td>产出文件，name 用于下载，path 是从 backend 目录算起的相对路径，例如 <code>data/outputs/{id}/...</code>。</td></tr>
+        <tr><td>preview / output_columns</td><td>前 20 行预览和完整输出列名。</td></tr>
+        <tr><td>anomalies / warnings</td><td>异常明细和口径提示。</td></tr>
+        <tr><td>logs</td><td>处理日志，level 为 info / warn / err / ok。</td></tr>
+        <tr><td>stats / config</td><td>本次统计和配置快照，用于复盘。</td></tr>
+        <tr><td>stats（假期场景）</td><td><code>annual_hours</code> 年假抵扣小时，<code>personal_hours</code> 事假小时，<code>annual_rows</code> 输出为年假的行数，<code>annual_matched</code> 匹配到年假余额的工号数。</td></tr>
+      </table>
+
+      <h2 id="obj-anomaly">Anomaly（异常行）</h2>
+      <table class="params">
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td>row</td><td>源表实际行号，方便回原表核对。</td></tr>
+        <tr><td>source</td><td>来自哪个文件。</td></tr>
+        <tr><td>type</td><td>年假缺失 / 时长异常 / 日期异常 / 工号缺失 / 字段缺失 / 编码异常。</td></tr>
+        <tr><td>reason</td><td>为什么被隔离，写给人看。</td></tr>
+        <tr><td>raw</td><td>原始行的前几列，便于快速定位。</td></tr>
+      </table>
+
+      <footer>
+        星尘汇表智联 · 汇表 0.8.2 · 接口文档随代码一起放在 <code>backend/src/main/resources/static/docs</code>。
+        启动后端后访问 <code>/docs/</code> 即可，不需要联网。
+      </footer>
+    </div>
+  </main>
+</div>
+</body>
+</html>

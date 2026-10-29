@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "app")
 public class AppProperties {
 
-    private String version = "0.8.2";
+    private String version = "1.0.0";
     private String dataDir = "data";
     private String sampleDir = "../sample_data/raw";
     private String frontendDir = "../frontend/dist";
