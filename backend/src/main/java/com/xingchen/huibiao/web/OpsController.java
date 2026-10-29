@@ -28,8 +28,12 @@ import java.util.Map;
 @RequestMapping("/api/ops")
 public class OpsController {
 
-    /** 清理类接口必须带上这两个字，前端弹窗也已经要求用户手输一遍。 */
-    private static final String CONFIRM_WORD = "清理";
+    /**
+     * 清理类接口必须带上对应的一句话，前端弹窗也已经要求用户手输一遍。
+     * 两个动作各用各的，抄错、少打一个字都无效。
+     */
+    private static final String CONFIRM_RUNS = "确认清理数据";
+    private static final String CONFIRM_AUDIT = "确认清理日志";
 
     private final AgentRunStore runs;
     private final AgentToolCatalog tools;
@@ -74,11 +78,11 @@ public class OpsController {
 
     /**
      * 清理运行观测里的运行记录（「清理数据」）：
-     * body 必须带上 {"confirm":"清理"}，前端已让用户手动输入过一遍，这里再兜一层，防误触和脚本直连。
+     * body 必须带上 {"confirm":"确认清理数据"}，前端已让用户手动输过一遍，这里再兜一层，防误触和脚本直连。
      */
     @PostMapping("/runs/clear")
     public Map<String, Object> clearRuns(@RequestBody(required = false) Map<String, Object> body) {
-        requireConfirm(body);
+        requireConfirm(body, CONFIRM_RUNS);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("cleared", runs.clear());
         // 清理动作本身也留一条痕，方便事后追溯；这条会出现在刚清空的审计日志里
@@ -89,18 +93,18 @@ public class OpsController {
     /** 清理审计日志（「清理日志」）：日志本身就是被清对象，清完不再补记一条。 */
     @PostMapping("/audit/clear")
     public Map<String, Object> clearAudit(@RequestBody(required = false) Map<String, Object> body) {
-        requireConfirm(body);
+        requireConfirm(body, CONFIRM_AUDIT);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("cleared", audit.clear());
         return out;
     }
 
-    private void requireConfirm(Map<String, Object> body) {
+    private void requireConfirm(Map<String, Object> body, String expected) {
         String confirm = body == null || body.get("confirm") == null
                 ? ""
                 : String.valueOf(body.get("confirm")).trim();
-        if (!CONFIRM_WORD.equals(confirm)) {
-            throw new IllegalArgumentException("确认文字不对，请输入「" + CONFIRM_WORD + "」两个字后再试");
+        if (!expected.equals(confirm)) {
+            throw new IllegalArgumentException("确认文字不对，请输入「" + expected + "」后再试");
         }
     }
 

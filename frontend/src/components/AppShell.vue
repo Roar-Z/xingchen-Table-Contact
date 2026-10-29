@@ -112,9 +112,8 @@ function closeSettings() {
 
 /* ---------------- 设置菜单里的「清理数据 / 清理日志」 ----------------
  * 清的是运行观测那一页的内容：清理数据 = 运行记录与统计，清理日志 = 审计日志。
- * 都要求用户手动输入「清理」两个字才放行，往后再调一次接口也要带同样的确认文字。
+ * 两个动作各要求手输一句不同的话，少一个字、抄错都不放行；接口那头也校验同一句话。
  */
-const CONFIRM_WORD = '清理'
 const { show } = useToast()
 
 const clean = reactive({
@@ -124,6 +123,11 @@ const clean = reactive({
   busy: false,
   error: ''
 })
+
+// 清理数据 → 「确认清理数据」，清理日志 → 「确认清理日志」
+const confirmWord = computed(() =>
+  clean.kind === 'audit' ? '确认清理日志' : '确认清理数据'
+)
 
 const cleanMeta = computed(() =>
   clean.kind === 'audit'
@@ -153,16 +157,16 @@ function closeClean() {
 
 async function submitClean() {
   if (clean.busy) return
-  if (clean.input.trim() !== CONFIRM_WORD) {
-    clean.error = `请先输入「${CONFIRM_WORD}」两个字`
+  if (clean.input.trim() !== confirmWord.value) {
+    clean.error = `请先输入「${confirmWord.value}」`
     return
   }
   clean.busy = true
   clean.error = ''
   try {
     const res = clean.kind === 'audit'
-      ? await api.clearAuditLogs(CONFIRM_WORD)
-      : await api.clearAgentRuns(CONFIRM_WORD)
+      ? await api.clearAuditLogs(confirmWord.value)
+      : await api.clearAgentRuns(confirmWord.value)
     const count = res?.cleared ?? 0
     clean.open = false
     show(clean.kind === 'audit' ? `已清理 ${count} 条运行日志` : `已清理 ${count} 条运行记录`)
@@ -389,14 +393,14 @@ onBeforeUnmount(() => {
           <h3>{{ cleanMeta.title }}</h3>
         </div>
         <p class="clean-desc">{{ cleanMeta.desc }}</p>
-        <label class="clean-label" for="clean-confirm">请输入 <b>{{ CONFIRM_WORD }}</b> 两个字以确认</label>
+        <label class="clean-label" for="clean-confirm">请输入 <b>{{ confirmWord }}</b> 以确认</label>
         <input
           id="clean-confirm"
           v-model="clean.input"
           class="clean-input"
           type="text"
           autocomplete="off"
-          :placeholder="CONFIRM_WORD"
+          :placeholder="confirmWord"
           @keydown.enter="submitClean"
         />
         <p v-if="clean.error" class="clean-error">{{ clean.error }}</p>
@@ -405,7 +409,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="btn btn-danger-solid"
-            :disabled="clean.busy || clean.input.trim() !== CONFIRM_WORD"
+            :disabled="clean.busy || clean.input.trim() !== confirmWord"
             @click="submitClean"
           >
             {{ clean.busy ? '清理中…' : '确认清理' }}
