@@ -3,7 +3,7 @@ package com.xingchen.huibiao.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
-// 运行参数。放在 application.yml 里，换机器时不用改代码。
+// 运行参数
 @Component
 @ConfigurationProperties(prefix = "app")
 public class AppProperties {

@@ -167,7 +167,6 @@ public class SqliteDb {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    // 表里一条都没有：用来判断要不要把老版本的 JSON 数据导进来。
     public boolean isEmpty(String table) {
         return count("SELECT COUNT(*) FROM " + table) == 0;
     }
@@ -237,7 +236,7 @@ public class SqliteDb {
         return map == null ? new LinkedHashMap<>() : map;
     }
 
-    // 老版本把数据写成 JSON 文件。导入成功后把原文件改名成 *.migrated 留一份，
+    // 老版本把数据写成 JSON 文件。导进库之后把原文件改名成 *.migrated 留一份，出问题还能翻回去看。
     public boolean retireLegacy(Path legacy) {
         if (legacy == null || !Files.isRegularFile(legacy)) {
             return false;

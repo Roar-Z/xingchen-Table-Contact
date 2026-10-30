@@ -40,7 +40,7 @@ public class WebConfig implements WebMvcConfigurer {
                     .setCacheControl(CacheControl.noCache());
             registry.addResourceHandler("/favicon.ico")
                     .addResourceLocations(dist.toUri().toString());
-            // 开发/设计文档只有一份，放在前端的 public/docs 里，构建后就在 dist/docs
+            // 开发/设计文档，放在前端的 public/docs 里，构建后就在 dist/docs
             registry.addResourceHandler("/docs/**")
                     .addResourceLocations(dist.resolve("docs").toUri().toString());
         }

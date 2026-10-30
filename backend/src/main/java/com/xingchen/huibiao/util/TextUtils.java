@@ -8,11 +8,11 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// 表格里的值大多不可靠：数字带单位、日期有五六种写法、表头夹着空格和括号。
+// 表格里的值大多不干净：数字带单位、日期五六种写法、表头夹空格和括号，这里统一收一下
 public final class TextUtils {
 
     private static final Pattern NUMBER = Pattern.compile("[-+]?\\d+(\\.\\d+)?");
-    // 从别的系统复制粘贴、或者导出时编码不对，会留下这些典型残字。
+    // 复制粘贴或编码不对时留下的典型残字
     private static final Pattern GARBLED = Pattern.compile("锟斤拷|烫烫烫|屯屯屯|ï¿½|\\?{3,}");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -24,7 +24,7 @@ public final class TextUtils {
         return value == null ? "" : value.trim();
     }
 
-    // 表头归一化：全角转半角，去掉空格、括号、冒号、下划线。
+    // 表头归一化：全角转半角，空格、括号、冒号、下划线全去掉
     public static String norm(String value) {
         if (value == null) {
             return "";
@@ -44,7 +44,7 @@ public final class TextUtils {
                 .replaceAll("[\\s()（）\\[\\]【】{}<>《》:：,，.。;；'\"“”‘’_\\-—/\\\\|*#]", "");
     }
 
-    // 关联键比较用：各系统对同一个人的编号写法不一样，比对前统一一次。
+    // 关联键比对之前先过一遍：同一个工号，各系统写法不一样
     public static String key(String value) {
         String s = norm(value);
         if (s.isEmpty()) return s;
@@ -62,7 +62,7 @@ public final class TextUtils {
                 || "—".equals(value.trim()) || "-".equals(value.trim());
     }
 
-    // 判断一段文字里有没有编码损坏的痕迹。真正的乱码没法还原，只能挑出来交给人工。
+    // 判断是不是乱码。真乱码没法还原，只能挑出来交给人看
     public static boolean garbled(String value) {
         if (value == null || value.isEmpty()) {
             return false;
@@ -70,7 +70,7 @@ public final class TextUtils {
         return value.indexOf('\uFFFD') >= 0 || GARBLED.matcher(value).find();
     }
 
-    // 取第一段数字。"2.5小时" -> 2.5，"共 3 天" -> 3，空值返回 null。
+    // 取第一段数字。"2.5小时" 得 2.5，"共 3 天" 得 3，没数字就返回 null
     public static Double parseNumber(String value) {
         if (isBlank(value)) {
             return null;
@@ -103,7 +103,7 @@ public final class TextUtils {
         return String.valueOf(round1(value));
     }
 
-    // 兼容 4/1/26、2026-04-27、2026/4/27、2026年4月1日 这几种写法。
+    // 4/1/26、2026-04-27、2026/4/27、2026年4月1日 这几种写法都得认
     public static LocalDate parseDate(String value) {
         if (isBlank(value)) {
             return null;
@@ -136,7 +136,7 @@ public final class TextUtils {
         }
     }
 
-    // 把日期和 "20:00" 拼成 HR 能接受的 yyyy-MM-dd HH:mm。
+    // 日期和 "20:00" 拼成 yyyy-MM-dd HH:mm，HR 系统只认这个格式
     public static String combineDateTime(String date, String time) {
         LocalDate d = parseDate(date);
         if (d == null) {
@@ -158,7 +158,7 @@ public final class TextUtils {
         return date == null ? null : date.format(DATE);
     }
 
-    // 只保留文件名，防止下载接口被 ../ 穿越。
+    // 只留文件名，防止下载接口被 ../ 穿越到别的目录
     public static String safeName(String name) {
         if (name == null) {
             return "file";

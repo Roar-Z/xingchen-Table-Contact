@@ -6,7 +6,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
 
-// 任务执行线程池。现场一般就一两个人用，2 个常驻线程够跑示例，
+// 任务执行线程池
 @Configuration
 public class AsyncConfig {
 

@@ -12,7 +12,6 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Duration;
 import java.util.List;
 
-// LangChain4j 是可选的：只有把 app.llm.enabled 打开才会创建模型。
 @Configuration
 public class LangChain4jConfig {
 
