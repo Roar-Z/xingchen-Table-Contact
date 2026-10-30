@@ -2,6 +2,7 @@ package com.xingchen.huibiao.web;
 
 import com.xingchen.huibiao.model.BridgeDataset;
 import com.xingchen.huibiao.service.bridge.BridgeAgentService;
+import com.xingchen.huibiao.service.bridge.BridgeArchiveService;
 import com.xingchen.huibiao.service.bridge.BridgeKnowledge;
 import com.xingchen.huibiao.service.bridge.BridgeMemory;
 import com.xingchen.huibiao.service.bridge.BridgeStore;
@@ -41,14 +42,17 @@ public class BridgeController {
     private final BridgeMemory memory;
     private final BridgeKnowledge knowledge;
     private final SettingsService settings;
+    private final BridgeArchiveService archive;
 
     public BridgeController(BridgeAgentService agents, BridgeStore store, BridgeMemory memory,
-                            BridgeKnowledge knowledge, SettingsService settings) {
+                            BridgeKnowledge knowledge, SettingsService settings,
+                            BridgeArchiveService archive) {
         this.agents = agents;
         this.store = store;
         this.memory = memory;
         this.knowledge = knowledge;
         this.settings = settings;
+        this.archive = archive;
     }
 
     // 上传压缩包或文件夹里的 Excel，落盘后立刻扫描出一张张表
@@ -168,13 +172,19 @@ public class BridgeController {
     public BridgeDataset auto(@PathVariable("id") String id,
                               @RequestBody(required = false) Map<String, Object> body) {
         Object instruction = body == null ? null : body.get("instruction");
-        return agents.auto(id, instruction == null ? "" : String.valueOf(instruction));
+        return deliver(agents.auto(id, instruction == null ? "" : String.valueOf(instruction)));
     }
 
     // 老入口：同样走自主循环，目标取数据集上保存的那句
     @PostMapping("/datasets/{id}/run")
     public BridgeDataset run(@PathVariable("id") String id) {
-        return agents.run(id);
+        return deliver(agents.run(id));
+    }
+
+    // 交付完成的同时记进「任务记录」并归档「我的仓库」，让两种入口的结果在同一处找得到
+    private BridgeDataset deliver(BridgeDataset dataset) {
+        archive.archive(dataset);
+        return dataset;
     }
 
     // 真实进度：前端每 0.7 秒带上 since 轮询，拿到的是后端真实写下的每一步
@@ -201,7 +211,7 @@ public class BridgeController {
     // 手动审批的「确认执行」：方案已经在了，点完直接开跑，不重新规划
     @PostMapping("/datasets/{id}/approve")
     public BridgeDataset approve(@PathVariable("id") String id) {
-        return agents.approve(id);
+        return deliver(agents.approve(id));
     }
 
     // 会话式追问：body 的 instruction 就是那句话。
@@ -209,7 +219,7 @@ public class BridgeController {
     public BridgeDataset chat(@PathVariable("id") String id,
                               @RequestBody(required = false) Map<String, Object> body) {
         Object instruction = body == null ? null : body.get("instruction");
-        return agents.chat(id, instruction == null ? "" : String.valueOf(instruction));
+        return deliver(agents.chat(id, instruction == null ? "" : String.valueOf(instruction)));
     }
 
     // 结果和异常清单分页预览
@@ -238,7 +248,7 @@ public class BridgeController {
     public BridgeDataset tweak(@PathVariable("id") String id,
                                @RequestBody(required = false) Map<String, Object> body) {
         Object instruction = body == null ? null : body.get("instruction");
-        return agents.tweak(id, instruction == null ? "" : String.valueOf(instruction));
+        return deliver(agents.tweak(id, instruction == null ? "" : String.valueOf(instruction)));
     }
 
     // 选目录用：不给 path 就从默认导出目录和磁盘根开始列，给了就列它的子目录
