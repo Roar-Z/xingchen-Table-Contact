@@ -6,6 +6,7 @@ import TaskDetail from './views/TaskDetail.vue'
 import SheetWorkbench from './views/SheetWorkbench.vue'
 import SheetRepo from './views/SheetRepo.vue'
 import OpsView from './views/OpsView.vue'
+import AboutView from './views/AboutView.vue'
 import DocView from './views/DocView.vue'
 import NotFound from './views/NotFound.vue'
 
@@ -18,6 +19,8 @@ const routes = [
   { path: '/sheets', name: 'sheets', component: SheetWorkbench, meta: { title: '表格智作' } },
   { path: '/sheets/repo', name: 'sheet-repo', component: SheetRepo, meta: { title: '我的仓库' } },
   { path: '/ops', name: 'ops', component: OpsView, meta: { title: '运行观测' } },
+  // 项目简介是纯前端静态页，不读接口，断网也能看
+  { path: '/about', name: 'about', component: AboutView, meta: { title: '项目简介' } },
   // 文档在应用内的右侧内容区打开，meta.doc 交给 DocView 去决定嵌哪一页静态文档
   {
     path: '/docs/product',

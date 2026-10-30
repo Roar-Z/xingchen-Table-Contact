@@ -45,9 +45,11 @@ const editSamples = computed(() => {
 })
 const taskId = computed(() => route.params.id)
 const running = computed(() => task.value && ['queued', 'running'].includes(task.value.status))
+// 智能体模式转过来的任务：源表在数据集目录里，重跑和改结果要回新建任务页操作
+const bridgeTask = computed(() => !!task.value?.config?.bridge_dataset_id)
 // 重算期间保持入口可见（按钮显示“改写中”），避免面板一闪一闪
 const canEdit = computed(() => {
-  if (!task.value) return false
+  if (!task.value || bridgeTask.value) return false
   if (editBusy.value) return true
   return !running.value && ['done', 'warning'].includes(task.value.status)
 })
@@ -312,12 +314,13 @@ onUnmounted(stopPolling)
             <span class="mono">{{ task.id }}</span>
             <span>{{ task.scene_name }}</span>
             <span>{{ task.created_at }}</span>
+            <span v-if="bridgeTask" class="muted">结果表已归档到「我的仓库」，重跑和改结果回新建任务页操作</span>
           </div>
         </div>
         <div class="page-actions">
           <button class="btn" @click="router.push('/tasks')">返回列表</button>
           <button
-            v-if="task && !running"
+            v-if="task && !running && !bridgeTask"
             class="btn"
             :disabled="rerunning || deleting"
             @click="rerunTask"
@@ -411,7 +414,7 @@ onUnmounted(stopPolling)
                     <thead>
                       <tr>
                         <th>源文件</th>
-                        <th>行号</th>
+                        <th>{{ bridgeTask ? '序号' : '行号' }}</th>
                         <th>类型</th>
                         <th>原因</th>
                       </tr>

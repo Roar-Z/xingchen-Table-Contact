@@ -27,6 +27,7 @@ const router = useRouter()
 
 // 运行观测不占侧边栏的位置，收在左下角设置菜单的「系统与文档」里，避免导航越堆越长
 const navItems = [
+  { to: '/about', name: 'about', label: '项目简介', icon: 'info' },
   { to: '/', name: 'new-task', label: '新建任务', icon: 'plus' },
   { to: '/sheets', name: 'sheets', label: '表格智作', icon: 'table' },
   { to: '/tasks', name: 'tasks', label: '任务记录', icon: 'history' }
@@ -38,8 +39,11 @@ const currentTitle = computed(() => {
   return route.meta.title || '新建任务'
 })
 
-// 文档页：正文是自己仓库里的静态页，跟后端在不在线没关系，所以这页不挂任何提示条
-const docPage = computed(() => route.name === 'doc-product' || route.name === 'doc-dev')
+// 不依赖后端的页面：文档是 public/docs 里的静态页，项目简介是纯前端静态内容，
+// 后端口停了照样能翻，所以这两类页面不挂离线提示条
+const staticPage = computed(
+  () => route.name === 'doc-product' || route.name === 'doc-dev' || route.name === 'about'
+)
 
 // 断网不再说「服务连接中断」——那像故障。断网时能用的功能都还在，
 // 手动「重试」时要能看出真的在检测：请求期间状态文案换成「正在检测连接」
@@ -105,7 +109,7 @@ watch(
 const noticeBarText = computed(() => {
   if (noticeText.value) return noticeText.value
   // 文档页不提示离线：文档在 public/docs 里，后端停了照样能翻
-  if (docPage.value) return ''
+  if (staticPage.value) return ''
   if (apiState.online === false && !offlineMuted.value) {
     if (retryFailed.value) {
       return '重试失败：还是连不上服务，当前保持离线模式；本地解析、规则对齐和下载 CSV 照常可用。'
