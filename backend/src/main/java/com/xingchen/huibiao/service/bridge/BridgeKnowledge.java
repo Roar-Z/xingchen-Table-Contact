@@ -27,7 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
-// 知识库：用户上传的制度、口径说明、对照表（Word / Excel / PDF / 文本），取字后切片进本地库，
+// 知识库：用户上传的制度、口径说明、对照表（Word / Excel / PDF / 文本），取字后切片进本地库，检索时挑最像的几片拼成背景
 @Service
 public class BridgeKnowledge {
 
@@ -83,9 +83,9 @@ public class BridgeKnowledge {
         }
     }
 
-    // ==================== 上传 ====================
+    // 上传
 
-    // 上传若干文件：逐个取字、切片、落库。单份失败不影响其它份，
+    // 上传若干文件：逐个取字、切片、落库。单份失败不影响其它份，失败的挑出来在返回里报一句
     public Map<String, Object> upload(List<MultipartFile> files) {
         List<Entry> added = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
@@ -168,7 +168,7 @@ public class BridgeKnowledge {
         return entry;
     }
 
-    // ==================== 查询 / 删除 ====================
+    // 查询 / 删除
 
     public List<Map<String, Object>> list() {
         return entries.stream().map(this::summary).toList();
@@ -201,7 +201,7 @@ public class BridgeKnowledge {
         return true;
     }
 
-    // ==================== 检索 ====================
+    // 检索
 
     // 一段命中：哪份文件的哪一段、相似度多少
     public record Hit(String file, String kind, String text, double score) {
@@ -255,7 +255,7 @@ public class BridgeKnowledge {
         return word != null && word.length() >= 2;
     }
 
-    // 问句里的关键词常被客套话稀释：整句一起算余弦，分母被撑大，
+    // 问句里的关键词常被客套话稀释：整句一起算余弦，分母被撑大，所以按标点切成小段各算一遍，取相似度高的那几段
     static List<Set<Integer>> segmentsOf(String query) {
         List<Set<Integer>> out = new ArrayList<>();
         if (query == null) return out;
@@ -379,7 +379,7 @@ public class BridgeKnowledge {
         return entries.isEmpty();
     }
 
-    // ==================== 内部 ====================
+    // 内部
 
     // 切片：按段落边界贪心累积到 CHUNK_CHARS，超长段落硬切，相邻片留一点重叠
     static List<Chunk> chunk(String text) {

@@ -305,6 +305,7 @@ public class BridgeStore {
     }
 
     // 先只看条目名判断压缩包用的是哪套编码：国内压缩工具大多按 GBK 写文件名，
+    // 所以先按 UTF-8 试，解不出来再换 GB18030
     private Charset zipCharset(byte[] bytes) {
         try (ZipInputStream probe = new ZipInputStream(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
             while (probe.getNextEntry() != null) {
@@ -410,7 +411,7 @@ public class BridgeStore {
         return TABLE_EXT.stream().anyMatch(lower::endsWith);
     }
 
-    // ==================== 自定义匹配规则 ====================
+    // 自定义匹配规则
 
     public List<Map<String, String>> rules() {
         String body = db.kv(RULES_SCOPE);

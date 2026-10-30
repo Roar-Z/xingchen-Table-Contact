@@ -57,7 +57,7 @@ public class ResultEditService {
         this.chatModel = chatModel;
     }
 
-    // ==================== 听懂一句话 ====================
+    // 听懂一句话
 
     public ResultRevision parse(String instruction, TaskRecord task) {
         if (TextUtils.isBlank(instruction)) {
@@ -229,7 +229,7 @@ public class ResultEditService {
         return ops;
     }
 
-    // ==================== 校验与描述 ====================
+    // 校验与描述
 
     private void validate(List<Map<String, Object>> ops, List<String> columns) {
         for (Map<String, Object> op : ops) {
@@ -347,7 +347,7 @@ public class ResultEditService {
         };
     }
 
-    // ==================== 落盘格式 ====================
+    // 落盘格式
 
     public List<Map<String, Object>> revisionsOf(TaskRecord task) {
         List<Map<String, Object>> list = new ArrayList<>();
@@ -378,7 +378,7 @@ public class ResultEditService {
         return raw instanceof List<?> ? (List<Map<String, Object>>) raw : List.of();
     }
 
-    // ==================== 真正改结果 ====================
+    // 真正改结果
 
     // 把 task.config.edits 里的每一条修改按顺序重放到结果行上。
     public int apply(TaskRecord task, ProcessResult result) {
@@ -641,7 +641,7 @@ public class ResultEditService {
         return column;
     }
 
-    // ==================== 句式小工具 ====================
+    // 句式小工具
 
     private Map<String, Object> scopeOf(String text, List<String> columns) {
         Map<String, Object> scope = new LinkedHashMap<>();

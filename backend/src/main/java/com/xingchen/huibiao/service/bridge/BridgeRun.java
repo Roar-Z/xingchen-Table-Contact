@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-// 一次自主处理的过程记录：同一时刻一单只允许一个运行，过程中把每一步写成一条事件，
+// 一次自主处理的过程记录：同一时刻一单只允许一个运行，过程中把每一步写成一条事件，前端按 SSE 一条条往下滚
 @Service
 public class BridgeRun {
 
@@ -57,7 +57,7 @@ public class BridgeRun {
     // 跑完的现场再留一会儿：前端可能在请求返回后才补一次轮询
     private static final long KEEP_FINISHED_MS = 5 * 60 * 1000L;
 
-    // 全局并发上限：模型调用和 Excel 解析都是重活，多人同时点单时并发 2 单最稳，
+    // 全局并发上限：模型调用和 Excel 解析都是重活，多人同时点单时并发 2 单最稳，多出来的排队等前面跑完
     static final int MAX_CONCURRENT = 2;
     // 排队最长等多久：等不到就明确告诉用户“稍后再试”，别把一次请求挂成十分钟
     private static final long MAX_QUEUE_WAIT_MS = 120_000L;
@@ -78,7 +78,7 @@ public class BridgeRun {
         this.archive = archive == null ? BridgeRunArchive.NONE : archive;
     }
 
-    // ==================== 运行锁 + 全局排队 ====================
+    // 运行锁 + 全局排队
 
     // 抢占运行锁：已经有一单在跑就返回 false，调用方据此拒绝重复提交
     public synchronized boolean tryStart(String id) {
@@ -167,7 +167,7 @@ public class BridgeRun {
         persist(id);
     }
 
-    // ==================== 事件 ====================
+    // 事件
 
     // 写一条进度；没有运行现场（比如单独调用“只规划”接口）时什么都不记
     public void event(String id, String phase, String tool, String label, String detail) {
@@ -225,7 +225,7 @@ public class BridgeRun {
         live.modelCalls++;
     }
 
-    // ==================== 轮询 ====================
+    // 轮询
 
     // 前端轮询用：since 之后的新事件 + 当前阶段/是否在跑/是否已取消
     public Map<String, Object> snapshot(String id, int since) {
@@ -288,7 +288,7 @@ public class BridgeRun {
         return out;
     }
 
-    // ==================== 落库 ====================
+    // 落库
 
     // 把当前现场写一份到库里：事件条数很少，整份覆盖比增量追加更简单、也不会写重
     private void persist(String id) {

@@ -180,12 +180,16 @@ public class SettingsService {
     }
 
     public TemplateItem builtIn(String id) {
-        return builtInTemplates.stream().filter(t -> t.id().equals(id)).findFirst().orElse(null);
+        for (TemplateItem item : builtInTemplates) {
+            if (item.id().equals(id)) {
+                return item;
+            }
+        }
+        return null;
     }
 
     public double numberRule(String key, double fallback) {
-        Object value = rules().stream().filter(r -> r.key().equals(key)).findFirst()
-                .map(RuleItem::value).orElse(fallback);
+        Object value = ruleValue(key, fallback);
         if (value instanceof Number n) {
             return n.doubleValue();
         }
@@ -197,8 +201,7 @@ public class SettingsService {
     }
 
     public boolean boolRule(String key, boolean fallback) {
-        Object value = rules().stream().filter(r -> r.key().equals(key)).findFirst()
-                .map(RuleItem::value).orElse(fallback);
+        Object value = ruleValue(key, fallback);
         if (value instanceof Boolean b) {
             return b;
         }
@@ -206,9 +209,18 @@ public class SettingsService {
     }
 
     public String textRule(String key, String fallback) {
-        Object value = rules().stream().filter(r -> r.key().equals(key)).findFirst()
-                .map(RuleItem::value).orElse(fallback);
+        Object value = ruleValue(key, fallback);
         return value == null ? fallback : String.valueOf(value);
+    }
+
+    // 三个 xxxRule 都要按 key 找一条规则，找的写法一模一样，抽出来省得抄三遍
+    private Object ruleValue(String key, Object fallback) {
+        for (RuleItem rule : rules()) {
+            if (rule.key().equals(key)) {
+                return rule.value();
+            }
+        }
+        return fallback;
     }
 
     public static class SettingsData {

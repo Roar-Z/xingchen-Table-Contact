@@ -51,7 +51,7 @@ public class AuditLog {
                 + "SELECT id FROM audit_logs ORDER BY id DESC LIMIT " + MAX_ENTRIES + ")");
     }
 
-    // 老版本把审计日志写成 audit.log.jsonl，一行一条。只在表还空着时导入一次，
+    // 老版本把审计日志写成 audit.log.jsonl，一行一条。只在表还空着时导入一次，导完把文件改名成 .migrated，下次启动不重复导
     private void migrateLegacy() {
         Path file = paths.auditLogFile();
         if (!db.isEmpty("audit_logs") || !Files.isRegularFile(file)) {

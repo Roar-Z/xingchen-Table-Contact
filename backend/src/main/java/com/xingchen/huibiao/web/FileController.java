@@ -24,7 +24,7 @@ public class FileController {
         this.mapper = mapper;
     }
 
-    // 上传文件。返回体就是文件元数据，额外带一个 duplicate 标记：
+    // 上传文件。返回体就是文件元数据，另外多一个 duplicate 标记，表示这份文件之前传过
     @PostMapping("/upload")
     public Map<String, Object> upload(@RequestParam("file") MultipartFile file,
                                       @RequestParam(value = "role", defaultValue = "auto") String role) {

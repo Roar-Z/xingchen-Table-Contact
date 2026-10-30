@@ -62,7 +62,7 @@ public class SheetController {
     @PostMapping("/logs/delete")
     public Map<String, Object> deleteLogs(@RequestBody(required = false) Map<String, Object> body) {
         List<String> ids = body != null && body.get("ids") instanceof List<?> list
-                ? list.stream().map(String::valueOf).toList()
+                ? toStrings(list)
                 : List.of();
         return sheets.deleteLogs(ids);
     }
@@ -93,9 +93,8 @@ public class SheetController {
 
     @PostMapping("/blank")
     public Map<String, Object> blank(@RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked")
         List<String> columns = body.get("columns") instanceof List<?> list
-                ? list.stream().map(String::valueOf).toList()
+                ? toStrings(list)
                 : List.of();
         return sheets.blank(body.get("name") == null ? null : String.valueOf(body.get("name")), columns);
     }
@@ -105,7 +104,7 @@ public class SheetController {
     public Map<String, Object> compose(@RequestBody Map<String, Object> body) {
         String instruction = body.get("instruction") == null ? "" : String.valueOf(body.get("instruction"));
         List<String> ids = body.get("sheet_ids") instanceof List<?> list
-                ? list.stream().map(String::valueOf).toList()
+                ? toStrings(list)
                 : List.of();
         return sheets.compose(instruction, ids);
     }
@@ -170,14 +169,20 @@ public class SheetController {
     // 批量删除：body {"ids":[...]}，仓库列表勾选多张后一次删掉
     @PostMapping("/delete")
     public Map<String, Object> deleteMany(@RequestBody(required = false) Map<String, Object> body) {
-        List<String> ids = new ArrayList<>();
-        if (body != null && body.get("ids") instanceof List<?> list) {
-            for (Object item : list) {
-                if (item != null) {
-                    ids.add(String.valueOf(item));
-                }
+        List<String> ids = body != null && body.get("ids") instanceof List<?> list
+                ? toStrings(list)
+                : new ArrayList<>();
+        return sheets.deleteMany(ids);
+    }
+
+    // 请求体里的数组统一转成字符串列表，几个接口都要用
+    private static List<String> toStrings(List<?> list) {
+        List<String> out = new ArrayList<>();
+        for (Object item : list) {
+            if (item != null) {
+                out.add(String.valueOf(item));
             }
         }
-        return sheets.deleteMany(ids);
+        return out;
     }
 }

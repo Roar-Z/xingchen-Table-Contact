@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-// 假期余量结算。核心规则只有三条：
+// 假期余量结算：把请假明细和假期余额对起来，按 HR 模板的列算出一行行记录
 @Service
 public class LeaveSettlementService {
 
@@ -243,7 +243,7 @@ public class LeaveSettlementService {
         return result;
     }
 
-    // 关掉脏数据隔离时，问题行照原口径处理（能输出就输出，不能成行的跳过），
+    // 关掉脏数据隔离时，问题行照原口径处理（能输出就输出，不能成行的跳过），最后只在 warnings 里提一句
     private void hideAnomalies(ProcessResult result, boolean isolate) {
         if (isolate) {
             return;
@@ -278,7 +278,7 @@ public class LeaveSettlementService {
         return false;
     }
 
-    // 模板列先核对一遍：翻译不了的列、源表里找不到的必填列，严格模式下直接报错，
+    // 模板列先核对一遍：翻译不了的列、源表里找不到的必填列，严格模式下直接报错，宽松模式记条提醒、照常往下跑
     private void checkTemplate(IntentResult plan, TaskConfig config, ProcessResult result,
                                String empCol, String nameCol, String deptCol, String posCol,
                                String startDateCol, String endDateCol, String daysCol, String hoursCol,

@@ -53,7 +53,7 @@ public class SheetService {
         this.paths = paths;
     }
 
-    // ==================== 查询 ====================
+    // 查询
 
     public List<Map<String, Object>> list(String keyword) {
         String text = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
@@ -91,17 +91,15 @@ public class SheetService {
         long rows = 0;
         long revisions = 0;
         for (Map<String, Object> item : whole) {
-            rows += numberOf(item.get("row_count"));
-            revisions += numberOf(item.get("revision_count"));
+            Number rowCount = (Number) item.get("row_count");
+            Number revisionCount = (Number) item.get("revision_count");
+            rows += rowCount == null ? 0 : rowCount.longValue();
+            revisions += revisionCount == null ? 0 : revisionCount.longValue();
         }
         out.put("sheet_total", whole.size());
         out.put("row_total", rows);
         out.put("revision_total", revisions);
         return out;
-    }
-
-    private long numberOf(Object value) {
-        return value instanceof Number number ? number.longValue() : 0L;
     }
 
     public Map<String, Object> detail(String id) {
@@ -252,7 +250,7 @@ public class SheetService {
         return path;
     }
 
-    // ==================== 新建 ====================
+    // 新建
 
     public List<Map<String, Object>> upload(MultipartFile[] files) {
         if (files == null || files.length == 0) {
@@ -333,10 +331,13 @@ public class SheetService {
         if (table.columns.isEmpty()) {
             throw new IllegalArgumentException("任务产出表没有表头，跳过归档");
         }
-        SheetRecord record = store.all().stream()
-                .filter(item -> task.id.equals(item.taskId))
-                .findFirst()
-                .orElse(null);
+        SheetRecord record = null;
+        for (SheetRecord item : store.all()) {
+            if (task.id.equals(item.taskId)) {
+                record = item;
+                break;
+            }
+        }
         boolean exists = record != null;
         if (!exists) {
             record = newRecord(task.name, "task");
@@ -565,7 +566,7 @@ public class SheetService {
         return out;
     }
 
-    // ==================== 修改 ====================
+    // 修改
 
     public Map<String, Object> revise(String id, String instruction) {
         if (instruction == null || instruction.isBlank()) {
@@ -778,7 +779,7 @@ public class SheetService {
         return out;
     }
 
-    // ==================== 操作执行 ====================
+    // 操作执行
 
     private int applyOps(Table table, List<Map<String, Object>> ops) {
         int changed = 0;
@@ -957,7 +958,7 @@ public class SheetService {
         return false;
     }
 
-    // ==================== 存储与缓存 ====================
+    // 存储与缓存
 
     private SheetRecord newRecord(String name, String origin) {
         SheetRecord record = new SheetRecord();
@@ -1000,7 +1001,7 @@ public class SheetService {
         store.put(record);
     }
 
-    // 修改前留一份快照。快照按补齐后的表写，空行虽然不写单元格，
+    // 修改前留一份快照。快照按补齐后的表写，空行虽然不写单元格，但行列位置都留着，撤销时按位置原样铺回去
     private void backup(SheetRecord record, Table table) {
         Path source = paths.sheetPath(record.id);
         if (!Files.isRegularFile(source)) {

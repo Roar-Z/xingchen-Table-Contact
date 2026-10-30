@@ -109,6 +109,12 @@ public class AgentRunStore {
         return run;
     }
 
+    // 智能体（智能桥接）跑完一单也记一笔，字段和普通模式共用，观测页才能看到真实的跑单
+    public synchronized Run recordRun(Run run) {
+        append(run);
+        return run;
+    }
+
     public synchronized Run recordFailure(String note, int fileCount, long durationMs) {
         Run run = new Run();
         run.at = TimeUtils.nowSecond();
@@ -234,7 +240,7 @@ public class AgentRunStore {
         return out;
     }
 
-    // 运行观测里的「清理数据」：运行记录清空后统计自然归零，
+    // 运行观测里的「清理数据」：agent_runs 整表清空，统计自然归零，清掉的条数返回给前端
     public synchronized int clear() {
         return db.tx(connection -> {
             int count;

@@ -115,7 +115,10 @@ public class ExcelService {
         } catch (IOException e) {
             throw new IllegalStateException("读取 CSV 失败：" + e.getMessage(), e);
         }
-        int maxCols = rawRows.stream().mapToInt(List::size).max().orElse(0);
+        int maxCols = 0;
+        for (List<String> row : rawRows) {
+            maxCols = Math.max(maxCols, row.size());
+        }
         SheetData data = buildSheet("CSV", rawRows, maxCols, catalog, aliases, autoHeader, 0);
         List<FileMeta.SheetInfo> summaries = List.of(new FileMeta.SheetInfo("CSV", rawRows.size(), maxCols));
         return new SheetData(data.sheetName(), data.headerRow(), data.headers(), data.rows(), summaries);
@@ -200,7 +203,8 @@ public class ExcelService {
         return new SheetData(sheetName, headerIndex, headers, rows, List.of());
     }
 
-    // 找表头行。先按业务别名打分；一张任意表（食堂价格表、设备台账之类）命中不了别名时，
+    // 找表头行。先按业务别名打分；碰上食堂价格表、设备台账这种一张表都命中不了别名的，
+    // 就退回按“哪一行填得最满”来猜
     private int detectHeaderIndex(List<List<String>> rawRows, HeaderCatalog catalog,
                                   Map<String, List<String>> aliases) {
         int limit = Math.min(rawRows.size(), 12);

@@ -161,7 +161,7 @@ public class ExperienceStore {
         return removed;
     }
 
-    // 「清空运行数据」时一起清掉：经验是跑单过程中沉淀下来的运行期数据，
+    // 「清空运行数据」时一起清掉：经验是跑单过程中沉淀下来的运行期数据，留着下次还会被召回
     public int clear() {
         int count = items.size();
         items.clear();

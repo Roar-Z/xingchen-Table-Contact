@@ -7,7 +7,9 @@ import com.xingchen.huibiao.model.BridgeDataset;
 import com.xingchen.huibiao.service.ExcelService;
 import com.xingchen.huibiao.service.HeaderCatalog;
 import com.xingchen.huibiao.service.SettingsService;
+import com.xingchen.huibiao.service.governance.AgentRunStore;
 import com.xingchen.huibiao.util.TextUtils;
+import com.xingchen.huibiao.util.TimeUtils;
 import dev.langchain4j.model.chat.ChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -150,10 +152,13 @@ public class BridgeAgentService {
     private final BridgeKnowledge knowledge;
     // 运行现场：真实进度事件、单次运行锁、取消标记与运行预算
     private final BridgeRun run;
+    // 运行观测：智能体这一单跑完也要记一笔，和普通模式的编排同一张表
+    private final AgentRunStore agentRuns;
 
     public BridgeAgentService(BridgeStore store, ExcelService excel, HeaderCatalog catalog,
                               SettingsService settings, ObjectMapper mapper, ObjectProvider<ChatModel> chat,
-                              BridgeMemory memory, DataPaths paths, BridgeRun run, BridgeKnowledge knowledge) {
+                              BridgeMemory memory, DataPaths paths, BridgeRun run, BridgeKnowledge knowledge,
+                              AgentRunStore agentRuns) {
         this.store = store;
         this.excel = excel;
         this.catalog = catalog;
@@ -164,9 +169,10 @@ public class BridgeAgentService {
         this.paths = paths;
         this.run = run;
         this.knowledge = knowledge;
+        this.agentRuns = agentRuns;
     }
 
-    // ==================== 1. 上传 + 扫描 ====================
+    // 1. 上传 + 扫描
 
     public BridgeDataset create(String name, String sourceType, List<MultipartFile> uploads) {
         return create(name, sourceType, uploads, null);
@@ -303,7 +309,7 @@ public class BridgeAgentService {
         return new Kind(kind, KIND_LABELS.getOrDefault(kind, "普通表"));
     }
 
-    // ==================== 2. 规划 ====================
+    // 2. 规划
 
     public BridgeDataset plan(String id, String instruction) {
         BridgeDataset dataset = store.load(id);
@@ -406,7 +412,7 @@ public class BridgeAgentService {
         return dataset;
     }
 
-    // 没开大模型时，按方案的实际内容拼子任务：单表不写关联、没有计算就不写计算，
+    // 没开大模型时，按方案的实际内容拼子任务：单表不写关联、没有计算就不写计算，步骤表只列真正会做的事
     private void buildRuleSteps(BridgeDataset dataset, BridgeDataset.Plan plan, long start) {
         int totalColumns = dataset.tables.stream().mapToInt(t -> t.columns.size()).sum();
         plan.steps.add(step("scan_dataset", "扫描数据集",
@@ -478,7 +484,7 @@ public class BridgeAgentService {
                 "关联键为空，或在主数据表里对不上"));
     }
 
-    // 异常检查只对“真的参与计算”的字段生效：
+    // 异常检查只对“真的参与计算”的字段生效：没被用到的列不查，免得满屏无关提醒
     private void alignChecksToTables(BridgeDataset.Plan plan) {
         Set<String> activeTables = new LinkedHashSet<>();
         for (BridgeDataset.Source source : plan.sources) {
@@ -541,7 +547,7 @@ public class BridgeAgentService {
         }
     }
 
-    // 步骤表要跟最终方案对得上：模型排了“筛选在职员工”，但这条筛选没被采纳时，
+    // 步骤表要跟最终方案对得上：模型排了“筛选在职员工”，但这条筛选没被采纳时，对应那一步也从轨迹里划掉
     private void pruneSteps(BridgeDataset.Plan plan) {
         Set<String> unused = new LinkedHashSet<>();
         if (plan.computes.isEmpty()) unused.add("compute");
@@ -567,7 +573,7 @@ public class BridgeAgentService {
         return String.join("；", parts);
     }
 
-    // 字段对齐：自定义规则 > 内置词典 > 经验记忆。经验只补前两者都没认出来的列，
+    // 字段对齐：自定义规则 > 内置词典 > 经验记忆。经验只补前两者都没认出来的列，免得旧的覆盖用户手填的
     private List<BridgeDataset.Align> align(BridgeDataset dataset, BridgeMemory.Lesson lesson) {
         Map<String, String> custom = customRuleMap();
         Map<String, String> byKind = new LinkedHashMap<>();
@@ -628,7 +634,7 @@ public class BridgeAgentService {
         return TextUtils.norm(dataset.instruction == null ? "" : dataset.instruction);
     }
 
-    // 把经验落到方案上：规则没算出关联键时用上次的；业务目标完全一致时，
+    // 把经验落到方案上：规则没算出关联键时用上次的；业务目标完全一致时，就当上次同款来跑
     private void applyLesson(BridgeDataset.Plan plan, BridgeMemory.Lesson lesson, BridgeDataset dataset,
                             Set<String> labels) {
         if (lesson == null) return;
@@ -704,7 +710,7 @@ public class BridgeAgentService {
         return sb.toString();
     }
 
-    // 跑成功之后沉淀一条经验：记的是“这张表的这列其实是这个标准字段”，
+    // 跑成功之后沉淀一条经验：记的是“这张表的这列其实是这个标准字段”，下次同一张表能直接认出来
     private void remember(BridgeDataset dataset, BridgeDataset.Plan plan, BridgeDataset.Result result) {
         if (result == null || result.okRows <= 0) return;
         List<BridgeMemory.Alias> aliases = new ArrayList<>();
@@ -782,7 +788,7 @@ public class BridgeAgentService {
         return null;
     }
 
-    // 「2月已享年假天数」「剩余年假可休」这类带修饰词的列，名字里虽然有“天/小时”，
+    // 「2月已享年假天数」「剩余年假可休」这类带修饰词的列，名字里虽然有“天/小时”，但算的是余额不是本次时长
     private boolean decorated(String key) {
         for (String word : List.of("已享", "已休", "享有", "剩余", "余额", "累计", "上限", "备注", "在职", "合计享")) {
             if (key.contains(word)) return true;
@@ -995,7 +1001,7 @@ public class BridgeAgentService {
         return dataset.tables.stream().anyMatch(t -> kind.equals(t.kind));
     }
 
-    // 指令里点名要的表，数据集里可能压根没有。先说清楚，
+    // 指令里点名要的表，数据集里可能压根没有。先说清楚，别等跑完才让人发现少了一张表
     private List<String> missingNotes(String text, List<BridgeDataset.Align> aligns) {
         List<String> notes = new ArrayList<>();
         boolean hasSalaryField = aligns.stream().anyMatch(a -> List.of("base_salary", "performance", "allowance",
@@ -1132,9 +1138,9 @@ public class BridgeAgentService {
                 + plan.outputColumns.size() + " 列标准表；命中异常的行单独出清单。";
     }
 
-    // ==================== 3. 规划器（大模型） ====================
+    // 3. 规划器（大模型）
 
-    // 规划提示：把可用的原子能力、数据集结构、已经对齐的标准字段都摊开，
+    // 规划提示：把可用的原子能力、数据集结构、已经对齐的标准字段都摊开，让模型只做取舍
     private String plannerPrompt(BridgeDataset dataset, String instruction, BridgeDataset.Plan plan,
                                  Set<String> labels, BridgeMemory.Lesson lesson) {
         StringBuilder sb = new StringBuilder();
@@ -1460,9 +1466,9 @@ public class BridgeAgentService {
         }
     }
 
-    // ==================== 4. 执行 ====================
+    // 4. 执行
 
-    // ==================== 4. 自主执行 ====================
+    // 4. 自主执行
 
     // ---------------- 运行席位与重试：把“偶发失败”和“真的坏了”分开 ----------------
     // 模型调用最多试几次：首次 + 1 次重试。再失败就该走降级逻辑，不能让用户干等
@@ -1502,7 +1508,7 @@ public class BridgeAgentService {
         throw last == null ? new IllegalStateException(what + "失败") : last;
     }
 
-    // 调一次模型：失败原地重试一次。每次真实请求都记一次预算，
+    // 调一次模型：失败原地重试一次。每次真实请求都记一次预算，重试用完还失败就往上抛
     private String askModel(String id, String prompt) {
         ChatModel model = chat.getIfAvailable();
         if (model == null) throw new IllegalStateException("当前没有启用大模型");
@@ -1555,14 +1561,57 @@ public class BridgeAgentService {
     // 把“跑这一单”包起来：抢席位 → 执行 → 失败也要把这一单标成失败并留下原因。
     private BridgeDataset guarded(String id, java.util.function.Supplier<BridgeDataset> body) {
         beginRun(id);
+        long started = System.currentTimeMillis();
+        BridgeDataset done = null;
         try {
-            return body.get();
+            done = body.get();
+            return done;
         } catch (RuntimeException e) {
             markFailed(id, e);
             throw e;
         } finally {
             run.finish(id);
+            recordRun(done, System.currentTimeMillis() - started);
         }
+    }
+
+    // 记进运行观测：只出方案还没执行的不算一次跑单，其余按交付/失败记
+    private void recordRun(BridgeDataset done, long durationMs) {
+        try {
+            if (done != null && "awaiting".equals(done.status)) {
+                return;
+            }
+            AgentRunStore.Run record = new AgentRunStore.Run();
+            record.at = TimeUtils.nowSecond();
+            record.status = done != null && "done".equals(done.status) ? "ok" : "failed";
+            record.durationMs = durationMs;
+            record.files = done == null ? 0 : done.tables.size();
+            BridgeDataset.Plan plan = done == null ? null : done.plan;
+            if (plan != null) {
+                record.mode = plan.mode == null || plan.mode.isBlank() ? "rules" : plan.mode;
+                record.steps = plan.steps == null ? 0 : plan.steps.size();
+                record.fixes = plan.attempts == null ? 0 : plan.attempts.size();
+                record.note = clip(plan.summary);
+                if (plan.steps != null) {
+                    for (BridgeDataset.Step step : plan.steps) {
+                        if (step.tool != null && !step.tool.isBlank() && !record.tools.contains(step.tool)) {
+                            record.tools.add(step.tool);
+                        }
+                    }
+                }
+            }
+            if (done != null && !"done".equals(done.status) && !done.notes.isEmpty()) {
+                record.note = clip(done.notes.get(done.notes.size() - 1));
+            }
+            agentRuns.recordRun(record);
+        } catch (Exception e) {
+            log.warn("记运行观测时出错（不影响这一单的结果）：{}", e.getMessage());
+        }
+    }
+
+    private static String clip(String text) {
+        if (text == null) return "";
+        return text.length() <= 300 ? text : text.substring(0, 300) + "…";
     }
 
     // 失败要把状态落定，并把原因写进备注与运行日志，避免“卡在运行中”
@@ -1626,7 +1675,7 @@ public class BridgeAgentService {
         return planned;
     }
 
-    // 自主循环本身：执行 → 对照验收标准 → 决定改一处 → 重跑 → 没变好就回滚，
+    // 自主循环本身：执行 → 对照验收标准 → 决定改一处 → 重跑 → 没变好就回滚，最多三轮
     private BridgeDataset.Result autonomyLoop(BridgeDataset planned, BridgeDataset.Plan plan, String prefix) {
         String id = planned.id;
         BridgeDataset.Result current = execute(planned, plan, System.currentTimeMillis());
@@ -1722,7 +1771,7 @@ public class BridgeAgentService {
         return current;
     }
 
-    // 用一句话改：交付后用户说“部门列不要了”“按姓名关联”“加一列实发工资”，
+    // 用一句话改：交付后用户说“部门列不要了”“按姓名关联”“加一列实发工资”，模型听懂就走模型，没听懂退回规则句式
     public BridgeDataset tweak(String id, String request) {
         // 改方案同样跑一轮执行，和首跑共用一把运行锁：正在跑的时候不允许再叠一单
         return guarded(id, () -> tweakInternal(id, request));
@@ -1791,7 +1840,7 @@ public class BridgeAgentService {
         return dataset;
     }
 
-    // 没有大模型时的口语理解：只认几类最常说的修改，认不准就老实说没理解，
+    // 没有大模型时的口语理解：只认几类最常说的修改，听不懂就老实说没理解，不硬猜
     private String applyRuleTweak(BridgeDataset.Plan plan, BridgeDataset dataset, Set<String> labels, String request) {
         List<String> actions = new ArrayList<>();
         String text = request.replace('\u3000', ' ').trim();
@@ -1903,7 +1952,7 @@ public class BridgeAgentService {
         return compute;
     }
 
-    // 这句话是不是要求去掉这个字段。两种常见说法都认：
+    // 这句话是不是要求去掉这个字段。两种常见说法都认：“去掉部门”“不要部门列”，其余一律当不是
     private boolean afterRemoval(String text, String word) {
         if (TextUtils.isBlank(word)) return false;
         for (String verb : List.of("去掉", "删除", "不要", "别看", "撤掉", "取消")) {
@@ -2220,7 +2269,7 @@ public class BridgeAgentService {
         return out;
     }
 
-    // ==================== 5. 对话 ====================
+    // 5. 对话
 
     // 会话式追问：交付之后可以问“为什么这么算”“异常为什么这么多”，也可以顺手说“3 月不要了”。
     public BridgeDataset chat(String id, String text) {
@@ -2447,7 +2496,7 @@ public class BridgeAgentService {
         return out;
     }
 
-    // 一轮结束时决定下一步：优先问模型（它能看出“关联键认错、少算一列”这类语义问题），
+    // 一轮结束时决定下一步：优先问模型（它能看出“关联键认错、少算一列”这类语义问题），模型没话说再退回规则判断
     private String decide(BridgeDataset dataset, BridgeDataset.Plan plan, BridgeDataset.Result result, int round) {
         ChatModel model = chat.getIfAvailable();
         if (model != null) {
@@ -2478,7 +2527,7 @@ public class BridgeAgentService {
         return decideByRules(plan, result);
     }
 
-    // 模型用不上时的自主判断。只做两类最典型、且有把握的判断，一次只改一处：
+    // 模型用不上时的自主判断。只做两类最典型、且有把握的判断，一次只改一处，改完看结果有没有变好
     private String decideByRules(BridgeDataset.Plan plan, BridgeDataset.Result result) {
         String top = topReason(result);
         if (top == null) return null;
@@ -2614,7 +2663,7 @@ public class BridgeAgentService {
         return Math.round(ratio * 100) + "%";
     }
 
-    // 没给业务目标时，按数据集结构自己推断要做的事：先看同类型数据上次的目标，
+    // 没给业务目标时，按数据集结构自己推断要做的事：先看同类型数据上次的目标，再看表名和列名里的线索
     private String inferGoal(BridgeDataset dataset) {
         String kinds = kindSignature(dataset);
         String remembered = memory.goalFor(kinds);
@@ -2703,7 +2752,7 @@ public class BridgeAgentService {
             throw new IllegalStateException("主表读不出来，请重新上传数据集");
         }
 
-        // 日期区间和状态筛选要落在“原始记录”上：先筛再按工号聚合，
+        // 日期区间和状态筛选要落在“原始记录”上：先筛再按工号聚合，否则区间外的记录会被算进去
         Set<String> filteredKeys = new LinkedHashSet<>();
         if (fromDate != null || plan.statusFilter != null) {
             for (Map.Entry<String, List<Map<String, String>>> entry : stdRows.entrySet()) {
@@ -2739,7 +2788,7 @@ public class BridgeAgentService {
             }
         }
 
-        // 只有真正被用到的关联表才要求能对上：这单只统计加班时，
+        // 只有真正被用到的关联表才要求能对上：这单只统计加班时，缺一张假期表也照常跑
         Set<String> usedLabels = new LinkedHashSet<>();
         for (BridgeDataset.Compute compute : plan.computes) {
             usedLabels.addAll(compute.plus);
@@ -2965,7 +3014,7 @@ public class BridgeAgentService {
         if (!plan.notes.contains(text)) plan.notes.add(text);
     }
 
-    // 方案里真正影响执行的那几个字段的快照：自主循环改完要看有没有实质变化，
+    // 方案里真正影响执行的那几个字段的快照：自主循环改完要看有没有实质变化，没变化就不算改进
     private class Snapshot {
         String joinKey;
         String joinLabel;
@@ -3190,7 +3239,7 @@ public class BridgeAgentService {
     private record GroupRow(String key, Map<String, String> values) {
     }
 
-    // 主表按关联键合并。同一个工号可能有多条加班/请假记录，
+    // 主表按关联键合并。同一个工号可能有多条加班/请假记录，所以先按工号聚一下再算
     private List<GroupRow> groupRows(List<Map<String, String>> rows, String joinKey) {
         List<GroupRow> list = new ArrayList<>();
         if (joinKey == null) {
@@ -3289,7 +3338,7 @@ public class BridgeAgentService {
         return String.join("，", parts);
     }
 
-    // ==================== 5. 结果查询 ====================
+    // 5. 结果查询
 
     public Map<String, Object> rows(String id, String kind, int page, int size) {
         BridgeDataset dataset = store.load(id);

@@ -94,7 +94,7 @@ public class OpsController {
         return audit.page(page, pageSize);
     }
 
-    // 清理运行观测里的全部内容（「清理数据」）：
+    // 清理运行观测（「清理数据」）：运行记录、经验记忆、审计日志一起清，别留下删不干净的尾巴
     @PostMapping("/runs/clear")
     public Map<String, Object> clearRuns(@RequestBody(required = false) Map<String, Object> body) {
         requireConfirm(body, CONFIRM_RUNS);
@@ -116,7 +116,7 @@ public class OpsController {
         return out;
     }
 
-    // 删除所有表格数据（「删除所有表格」）：
+    // 删除所有表格数据（「删除所有表格」）：表格、任务、智能体数据集和上传副本全清
     @PostMapping("/sheets/clear")
     public Map<String, Object> clearSheets(@RequestBody(required = false) Map<String, Object> body) {
         requireConfirm(body, CONFIRM_SHEETS);
@@ -205,7 +205,12 @@ public class OpsController {
         checks.add(check("audit", "审计留痕", audit.recent(1).isEmpty() ? "warn" : "ok",
                 audit.recent(1).isEmpty() ? "还没有审计记录" : "方案/任务/改结果动作都会落审计日志"));
 
-        long okCount = checks.stream().filter(item -> "ok".equals(item.get("status"))).count();
+        long okCount = 0;
+        for (Map<String, Object> item : checks) {
+            if ("ok".equals(item.get("status"))) {
+                okCount++;
+            }
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("generated_at", TimeUtils.nowSecond());
         out.put("score", Math.round(okCount * 100.0 / checks.size()));

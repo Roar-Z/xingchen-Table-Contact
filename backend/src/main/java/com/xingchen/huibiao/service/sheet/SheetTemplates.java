@@ -47,10 +47,12 @@ public final class SheetTemplates {
     }
 
     public static Map<String, Object> find(String templateId) {
-        return items().stream()
-                .filter(item -> templateId != null && templateId.equals(item.get("id")))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("没有这个模板"));
+        for (Map<String, Object> item : items()) {
+            if (templateId != null && templateId.equals(item.get("id"))) {
+                return item;
+            }
+        }
+        throw new IllegalArgumentException("没有这个模板");
     }
 
     // 按一句话里的关键词猜一个模板，例如“做个考勤表”。

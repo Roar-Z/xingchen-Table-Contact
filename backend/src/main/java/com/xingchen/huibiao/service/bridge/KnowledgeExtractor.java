@@ -90,9 +90,9 @@ public final class KnowledgeExtractor {
         };
     }
 
-    // ==================== 纯文本 ====================
+    // 纯文本
 
-    // 文本类文件按 UTF-8 读；中文 Excel 导出的 csv 常是 GBK，解不成 UTF-8 就换 GBK 再试，
+    // 文本类文件按 UTF-8 读；中文 Excel 导出的 csv 常是 GBK，解不成 UTF-8 就换 GBK 再试，两个都不认就原样返回
     private static String readText(byte[] bytes) {
         String utf8 = new String(bytes, StandardCharsets.UTF_8);
         if (!utf8.contains("\uFFFD")) return utf8;
@@ -103,9 +103,9 @@ public final class KnowledgeExtractor {
         }
     }
 
-    // ==================== docx ====================
+    // docx
 
-    // docx 本质是 zip，正文在 word/document.xml。段落边界换成换行、制表符保留，
+    // docx 本质是 zip，正文在 word/document.xml。段落边界换成换行、制表符保留，其余标签直接去掉
     static String fromDocx(byte[] bytes) {
         try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
             ZipEntry entry;
@@ -139,7 +139,7 @@ public final class KnowledgeExtractor {
                 .replace("&amp;", "&");
     }
 
-    // ==================== xlsx / xls ====================
+    // xlsx / xls
 
     // 表格按"工作表 → 行 → 单元格"拍平成文本：每行一行、单元格用制表符分隔。
     static String fromExcel(byte[] bytes) {
@@ -160,7 +160,14 @@ public final class KnowledgeExtractor {
                         cells.add(value);
                     }
                     // 整行为空就跳过：空行对检索没有意义，还占切片名额
-                    if (cells.stream().allMatch(String::isEmpty)) continue;
+                    boolean empty = true;
+                    for (String cell : cells) {
+                        if (!cell.isEmpty()) {
+                            empty = false;
+                            break;
+                        }
+                    }
+                    if (empty) continue;
                     sb.append(String.join("\t", cells)).append("\n");
                 }
             }
@@ -171,9 +178,9 @@ public final class KnowledgeExtractor {
         return sb.toString();
     }
 
-    // ==================== PDF ====================
+    // PDF
 
-    // PDF 取字的最简可行版本：找到所有内容流，先试 FlateDecode 解压，
+    // PDF 取字的最简可行版本：找到所有内容流，先试 FlateDecode 解压，再按 Tj/TJ 操作符抠字符串，抠不出来就返回空
     static Extracted fromPdf(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
         String raw = latin(bytes);
@@ -315,7 +322,7 @@ public final class KnowledgeExtractor {
         return new String(bytes, StandardCharsets.ISO_8859_1);
     }
 
-    // ==================== 公共 ====================
+    // 公共
 
     // 统一空白：连续空行压成一个、行尾空格去掉；检索切片时按行拼回去更好切句
     static String normalize(String text) {

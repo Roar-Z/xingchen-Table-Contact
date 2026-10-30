@@ -89,9 +89,9 @@ public class AgentService {
         }
     }
 
-    // ==================== 模型可调用的工具集 ====================
+    // 模型可调用的工具集
 
-    // 一次规划会话：持有本次的文件、意图、经验、缺失列等状态，
+    // 一次规划会话：持有本次的文件、意图、经验、缺失列等状态，跑完一次就丢，不跨请求共用
     public final class Session {
 
         private final AnalyzeRequest request;
@@ -315,7 +315,12 @@ public class AgentService {
                 validated = true;
             }
             long mark = System.currentTimeMillis();
-            int mapped = (int) intent.mapping.stream().filter(row -> valid(row, loaded)).count();
+            int mapped = 0;
+            for (IntentResult.MappingSuggestion row : intent.mapping) {
+                if (valid(row, loaded)) {
+                    mapped++;
+                }
+            }
             AgentStep handoff = step("handoff", "生成待确认方案",
                     "共 " + mapped + " 条映射，其中自动生成 " + automatic(intent) + " 条，确认后进入业务规则",
                     "handoff_human", "ok");
@@ -331,11 +336,11 @@ public class AgentService {
             return handoffSummary;
         }
 
-        // ==================== 两条运行方式 ====================
+        // 两条运行方式
 
         // 真智能体：由模型复核预置结果、决定是否补救，并生成待人工确认的方案。
         AgentPlan runWithModel(ChatModel model) {
-            // 读表 / 识别场景 / 查记忆 / 校验 / 自动补全都是确定性操作，先在本地按依赖顺序跑完，
+            // 读表 / 识别场景 / 查记忆 / 校验 / 自动补全都是确定性操作，先在本地按依赖顺序跑完，模型只在需要猜的地方才出场
             if (!inspected) {
                 inspectSources();
             }
@@ -503,7 +508,7 @@ public class AgentService {
         String run(@UserMessage String task);
     }
 
-    // ==================== 下面是纯 Java 工具实现 ====================
+    // 下面是纯 Java 工具实现
 
     private int fillFromExperience(IntentResult intent, List<Loaded> loaded, ExperienceStore.Item item) {
         if (item == null || item.mapping.isEmpty() || intent.targetTemplate == null) {
@@ -641,22 +646,31 @@ public class AgentService {
         if (TextUtils.isBlank(row.column) || TextUtils.isBlank(row.fileId)) {
             return false;
         }
-        return loaded.stream()
-                .filter(item -> row.fileId.equals(item.meta.fileId))
-                .anyMatch(item -> item.columns.contains(row.column));
+        for (Loaded item : loaded) {
+            if (row.fileId.equals(item.meta.fileId) && item.columns.contains(row.column)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int automatic(IntentResult intent) {
-        return (int) intent.mapping.stream()
-                .filter(row -> "ai".equals(row.origin) || "agent".equals(row.origin) || "experience".equals(row.origin))
-                .count();
+        int count = 0;
+        for (IntentResult.MappingSuggestion row : intent.mapping) {
+            if ("ai".equals(row.origin) || "agent".equals(row.origin) || "experience".equals(row.origin)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private IntentResult.MappingSuggestion findByTarget(IntentResult intent, String target) {
-        return intent.mapping.stream()
-                .filter(row -> TextUtils.norm(row.target).equals(TextUtils.norm(target)))
-                .findFirst()
-                .orElse(null);
+        for (IntentResult.MappingSuggestion row : intent.mapping) {
+            if (TextUtils.norm(row.target).equals(TextUtils.norm(target))) {
+                return row;
+            }
+        }
+        return null;
     }
 
     private boolean requiredOf(IntentResult intent, String target) {
@@ -665,10 +679,12 @@ public class AgentService {
     }
 
     private Loaded mainSource(List<Loaded> loaded) {
-        return loaded.stream()
-                .filter(item -> "leave_request".equals(item.meta.role) || "overtime".equals(item.meta.role))
-                .findFirst()
-                .orElse(loaded.isEmpty() ? null : loaded.get(0));
+        for (Loaded item : loaded) {
+            if ("leave_request".equals(item.meta.role) || "overtime".equals(item.meta.role)) {
+                return item;
+            }
+        }
+        return loaded.isEmpty() ? null : loaded.get(0);
     }
 
     private Loaded findFile(List<Loaded> loaded, String fileName, String column, String expr) {
@@ -708,7 +724,7 @@ public class AgentService {
         return null;
     }
 
-    // 日期列。key=start/end 时优先配对应那一侧（起始日期 / 结束日期），
+    // 日期列。key=start/end 时优先配对应那一侧（起始日期 / 结束日期），配不上就退回名字带日期、内容也真是日期的那一列
     private String findDateColumn(Loaded source, String key) {
         String fallback = null;
         for (String column : source.columns) {

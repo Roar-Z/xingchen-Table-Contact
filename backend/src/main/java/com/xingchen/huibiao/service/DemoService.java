@@ -26,7 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-// 示例数据来自比赛提供的四张表。示例走的是和用户上传完全一样的登记、解析、执行流程，
+// 示例数据是比赛发的那四张表。它跟用户上传走的是同一套登记、解析、执行流程，只是文件由程序自己放，不用人挑
 @Service
 public class DemoService {
 

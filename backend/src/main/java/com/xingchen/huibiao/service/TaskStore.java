@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-// 任务仓库。落 SQLite（data/huibiao.db）：
+// 任务仓库。任务记录都存在 data/huibiao.db 里，重启之后列表还在
 @Service
 public class TaskStore {
 

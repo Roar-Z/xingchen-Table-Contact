@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-// 产出文件。每个任务一个目录，文件名保持业务人员熟悉的样子：
+// 写产出文件。每个任务一个目录，文件名照业务人员熟悉的写法来，比如 HR导入_加班_20261030.xls
 @Service
 public class ExportService {
 

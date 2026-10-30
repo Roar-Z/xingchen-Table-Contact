@@ -22,7 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 异步执行器。新建任务接口只负责排队，真正的读表、计算、写文件都在这里跑，
+// 异步执行器。新建任务接口只负责排队，真正的读表、计算、写文件都在这里跑，所以接口能立刻返回
 @Component
 public class TaskRunner {
 
@@ -180,7 +180,7 @@ public class TaskRunner {
         addLog(task, "ok", "已按你的话修改结果：" + summary);
     }
 
-    // 智能体执行阶段的自愈：结果是 0 行时，说明映射和源表对不上（多半是人工指错了列，
+    // 智能体执行阶段的自愈：结果是 0 行时，说明映射和源表对不上（多半是人工指错了列，或模型给的列名近似但不是同一个），这里按推荐重建一遍映射重跑
     private ProcessResult selfRepair(TaskRecord task, CreateTaskRequest request,
                                      IntentResult plan, ProcessResult broken) {
         if (broken.outputRows > 0 || broken.totalRows == 0) {
@@ -304,7 +304,7 @@ public class TaskRunner {
         }
     }
 
-    // 记忆要以“最终生效的映射”为准：执行期自愈会把修好的映射写回 task.config，
+    // 记忆要以“最终生效的映射”为准：执行期自愈会把修好的映射写回 task.config，所以先读这份快照，没有再退回规划时的映射
     private List<MappingEntry> mappingEntries(TaskRecord task, CreateTaskRequest request, IntentResult plan) {
         Object snapshot = task.config == null ? null : task.config.get("mapping");
         if (snapshot instanceof List<?> list && !list.isEmpty()) {
@@ -400,7 +400,7 @@ public class TaskRunner {
         task.logs.add(new TaskRecord.LogEntry(TimeUtils.clock(), level, message));
     }
 
-    // 把结果表归档进「我的仓库」。归档失败不影响任务本身，只在任务日志里提示一句，
+    // 把结果表归档进「我的仓库」。归档失败不影响任务本身，只在任务日志里提示一句，任务照样算跑完
     private void archive(TaskRecord task) {
         try {
             Map<String, Object> sheet = sheetService.archiveFromTask(task);

@@ -277,7 +277,7 @@ public class IntentService {
         }
     }
 
-    // “合计小时”优先挂源表的“小时”列。有些 OA 导出的小时列是 0，真正有效的是“天”，
+    // “合计小时”优先挂源表的“小时”列。有些 OA 导出的小时列整列都是 0，真正有效的是“天”，所以前 100 行里一个正数都找不到时改用天数列
     private String preferredHoursColumn(ExcelService.SheetData sheet, Map<String, String> fields) {
         String hours = fields.get("hours");
         String days = fields.get("days");
@@ -302,9 +302,12 @@ public class IntentService {
                 Map<String, String> fields = catalog.suggest(leave.sheet.headers(), settings.mergedAliases());
                 String hourCol = fields.get("hours");
                 if (hourCol != null) {
-                    long zero = leave.sheet.rows().stream()
-                            .filter(r -> TextUtils.numberOrZero(r.values().get(hourCol)) == 0)
-                            .count();
+                    long zero = 0;
+                    for (ExcelService.RowData row : leave.sheet.rows()) {
+                        if (TextUtils.numberOrZero(row.values().get(hourCol)) == 0) {
+                            zero++;
+                        }
+                    }
                     if (zero > 0) {
                         result.notes.add("请假单的“小时”列有 " + zero + " 行是 0，结算时按“天 × 8 小时”折算，天也为 0 的才用小时。");
                     }
@@ -325,9 +328,12 @@ public class IntentService {
                 Map<String, String> fields = catalog.suggest(overtime.sheet.headers(), settings.mergedAliases());
                 String hourCol = fields.get("overtime_hours");
                 if (hourCol != null) {
-                    long bad = overtime.sheet.rows().stream()
-                            .filter(r -> TextUtils.parseNumber(r.values().get(hourCol)) == null)
-                            .count();
+                    long bad = 0;
+                    for (ExcelService.RowData row : overtime.sheet.rows()) {
+                        if (TextUtils.parseNumber(row.values().get(hourCol)) == null) {
+                            bad++;
+                        }
+                    }
                     if (bad > 0) {
                         result.notes.add("源表有 " + bad + " 行“申请加班”为空或不是数字，会单独隔离。");
                     }
@@ -727,7 +733,7 @@ public class IntentService {
         return map;
     }
 
-    // 把模型返回的映射合并进规则结果：目标列、文件名、源列名都必须能在当前上下文里对上，
+    // 把模型返回的映射合并进规则结果：目标列、文件名、源列名都必须能在当前上下文里对上，对不上的一律丢掉
     static int mergeModelMapping(IntentResult result, JsonNode root,
                                  Map<String, String> fileIdByLabel,
                                  Map<String, List<String>> columnsByFileId,
@@ -901,7 +907,12 @@ public class IntentService {
         if (headers == null) {
             return false;
         }
-        return headers.stream().anyMatch(header -> TextUtils.norm(header).contains("日期"));
+        for (String header : headers) {
+            if (TextUtils.norm(header).contains("日期")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String matchColumn(List<String> headers, String raw) {

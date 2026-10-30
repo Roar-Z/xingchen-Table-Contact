@@ -184,13 +184,13 @@ public class BridgeController {
         return agents.events(id, since);
     }
 
-    // 取消这一单：不中断线程，只置取消标记。执行侧在下一个检查点停下，
+    // 取消这一单：不中断线程，只打个取消标记，执行侧在下一个检查点自己停
     @PostMapping("/datasets/{id}/cancel")
     public Map<String, Object> cancel(@PathVariable("id") String id) {
         return agents.cancel(id);
     }
 
-    // 可执行权限：manual 手动审批（方案出完停住，等人确认）、auto 自动审批（默认，直接跑）、
+    // 可执行权限：manual 是方案出完停住等人确认，auto 是默认值，来了直接跑
     @PostMapping("/datasets/{id}/access")
     public BridgeDataset access(@PathVariable("id") String id,
                                 @RequestBody(required = false) Map<String, Object> body) {
@@ -233,7 +233,7 @@ public class BridgeController {
                 .body(new FileSystemResource(path));
     }
 
-    // 交付后用一句话改：body 的 instruction 就是用户那句自然语言，
+    // 交付之后用一句话改：body 里的 instruction 就是用户那句话
     @PostMapping("/datasets/{id}/tweak")
     public BridgeDataset tweak(@PathVariable("id") String id,
                                @RequestBody(required = false) Map<String, Object> body) {
@@ -265,7 +265,7 @@ public class BridgeController {
                 name == null ? "" : String.valueOf(name));
     }
 
-    // 导出位置：custom 是用户自定义的根目录（空表示用默认），
+    // 导出位置：custom 是用户自己选的根目录，空着表示用默认的
     @GetMapping("/export-dir")
     public Map<String, Object> exportDir() {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -298,7 +298,7 @@ public class BridgeController {
         return agents.reveal(id, artifact == null ? "" : String.valueOf(artifact));
     }
 
-    // ==================== 字段匹配规则：自定义 + 跨数据集复用 ====================
+    // 字段匹配规则：自定义 + 跨数据集复用
 
     @GetMapping("/rules")
     public List<Map<String, String>> rules() {

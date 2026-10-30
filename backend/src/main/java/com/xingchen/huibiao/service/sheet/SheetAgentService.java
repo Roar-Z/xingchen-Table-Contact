@@ -41,7 +41,7 @@ public class SheetAgentService {
         this.mapper = mapper;
     }
 
-    // ==================== 改表 ====================
+    // 改表
 
     public Map<String, Object> parseEdit(String instruction, List<String> columns, List<Map<String, Object>> sample) {
         ChatModel model = models.getIfAvailable();
@@ -271,7 +271,7 @@ public class SheetAgentService {
         return java.util.Optional.of(op);
     }
 
-    // ==================== 建表 / 融合 ====================
+    // 建表 / 融合
 
     public Map<String, Object> compose(String instruction, List<Map<String, Object>> sheets) {
         ChatModel model = models.getIfAvailable();
@@ -405,7 +405,7 @@ public class SheetAgentService {
         return fallback;
     }
 
-    // ==================== 通用 ====================
+    // 通用
 
     private void normalize(List<Map<String, Object>> ops, List<String> columns) {
         List<Map<String, Object>> kept = new ArrayList<>();

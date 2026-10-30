@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
-// 场景路由。解析结果和用户手动配置冲突时，以用户选的场景为准，
+// 场景路由。用户手选的场景优先，没人选的时候才按解析结果自己猜
 @Service
 public class SceneRouter {
 

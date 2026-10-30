@@ -326,7 +326,7 @@ public class SheetStore {
         }
     }
 
-    // 「删除所有表格数据」：整库清空——表记录、全部表格日志（含删表留痕）、
+    // 「删除所有表格数据」：整库清空，表记录、日志（连删表留痕一起）、磁盘上的 xlsx 和撤销快照全删掉，删完就回不去了
     public synchronized int clearAll() {
         int count = items.size();
         items.clear();

@@ -20,7 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 智能体入口。和 /api/tasks/analyze 的区别是它多返回一段执行轨迹，
+// 智能体入口。跟 /api/tasks/analyze 的区别是多返回一段执行轨迹，前端能按步骤回放
 @RestController
 @RequestMapping("/api/agent")
 public class AgentController {

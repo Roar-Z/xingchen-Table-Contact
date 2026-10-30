@@ -147,7 +147,11 @@ public class TaskService {
         config.put("brief", task.brief);
         config.put("scene", scene);
         config.put("target_template", task.target);
-        config.put("source_files", task.sourceFiles.stream().map(f -> f.name).toList());
+        List<String> sourceNames = new ArrayList<>();
+        for (TaskRecord.SourceRef file : task.sourceFiles) {
+            sourceNames.add(file.name);
+        }
+        config.put("source_files", sourceNames);
         config.put("isolate_anomaly", isolateAnomaly(request));
         config.put("strict_format", strictFormat(request));
         task.config = config;
@@ -163,10 +167,25 @@ public class TaskService {
         List<TaskRecord> all = store.all();
         Map<String, Integer> counts = new LinkedHashMap<>();
         counts.put("all", all.size());
-        counts.put("done", (int) all.stream().filter(t -> "done".equals(t.status)).count());
-        counts.put("running", (int) all.stream().filter(t -> "running".equals(t.status) || "queued".equals(t.status)).count());
-        counts.put("warning", (int) all.stream().filter(t -> "warning".equals(t.status)).count());
-        counts.put("failed", (int) all.stream().filter(t -> "failed".equals(t.status)).count());
+        int done = 0;
+        int running = 0;
+        int warning = 0;
+        int failed = 0;
+        for (TaskRecord task : all) {
+            if ("done".equals(task.status)) {
+                done++;
+            } else if ("running".equals(task.status) || "queued".equals(task.status)) {
+                running++;
+            } else if ("warning".equals(task.status)) {
+                warning++;
+            } else if ("failed".equals(task.status)) {
+                failed++;
+            }
+        }
+        counts.put("done", done);
+        counts.put("running", running);
+        counts.put("warning", warning);
+        counts.put("failed", failed);
 
         List<TaskRecord> filtered = new ArrayList<>(all);
         if (status != null && !status.isBlank() && !"all".equals(status)) {
@@ -337,18 +356,24 @@ public class TaskService {
                 throw new IllegalArgumentException("任务 " + task.id + " 正在执行，等它跑完再删除");
             }
         }
-        int removed = store.removeAll(targets.stream().map(t -> t.id).toList());
-        targets.forEach(t -> deleteOutputs(t.id));
+        List<String> targetIds = new ArrayList<>();
+        for (TaskRecord task : targets) {
+            targetIds.add(task.id);
+            deleteOutputs(task.id);
+        }
+        int removed = store.removeAll(targetIds);
         log.info("删除任务 {} 个", removed);
         return removed;
     }
 
-    // 「删除所有表格数据」时一起清任务记录：任务和它产出的表格是一套东西，
+    // 「删除所有表格数据」时一起清任务记录：任务和它产出的表格是一套东西，只删任务会留下找不到主人的表
     public int clearAll() {
-        List<String> ids = store.all().stream()
-                .map(task -> task.id)
-                .filter(id -> id != null && !id.isBlank())
-                .toList();
+        List<String> ids = new ArrayList<>();
+        for (TaskRecord task : store.all()) {
+            if (task.id != null && !task.id.isBlank()) {
+                ids.add(task.id);
+            }
+        }
         if (ids.isEmpty()) {
             return 0;
         }
@@ -419,11 +444,12 @@ public class TaskService {
         if (task.target == null || task.target.isBlank()) {
             return null;
         }
-        return files.all().stream()
-                .filter(meta -> "target_template".equals(meta.role) && task.target.equals(meta.name))
-                .map(meta -> meta.fileId)
-                .findFirst()
-                .orElse(null);
+        for (FileMeta meta : files.all()) {
+            if ("target_template".equals(meta.role) && task.target.equals(meta.name)) {
+                return meta.fileId;
+            }
+        }
+        return null;
     }
 
     private boolean boolConfig(TaskRecord task, String key, boolean fallback) {
@@ -444,10 +470,16 @@ public class TaskService {
         TaskRecord task = store.find(taskId)
                 .orElseThrow(() -> new IllegalArgumentException("没有找到任务 " + taskId));
         String wanted = TextUtils.safeName(artifactName);
-        TaskRecord.Artifact artifact = task.artifacts.stream()
-                .filter(a -> a.name.equals(wanted))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("这个任务没有产出文件：" + artifactName));
+        TaskRecord.Artifact artifact = null;
+        for (TaskRecord.Artifact item : task.artifacts) {
+            if (item.name.equals(wanted)) {
+                artifact = item;
+                break;
+            }
+        }
+        if (artifact == null) {
+            throw new IllegalArgumentException("这个任务没有产出文件：" + artifactName);
+        }
         Path path = resolveArtifact(artifact.path);
         if (!path.startsWith(paths.root())) {
             throw new IllegalArgumentException("文件路径不合法");
@@ -458,7 +490,7 @@ public class TaskService {
         return path;
     }
 
-    // 产出路径对外写成 data/outputs/...（从 backend 目录算起），
+    // 产出路径对外写成 data/outputs/...（从 backend 目录算起），取文件时再拼上父目录并规整，指到 outputs 外面的直接不认
     private Path resolveArtifact(String relative) {
         String clean = relative == null ? "" : relative.replace('\\', '/');
         Path parent = paths.root().getParent();

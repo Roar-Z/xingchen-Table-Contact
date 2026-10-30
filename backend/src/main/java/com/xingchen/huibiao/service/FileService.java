@@ -160,16 +160,19 @@ public class FileService {
             throw new IllegalStateException("读取上传文件失败：" + e.getMessage(), e);
         }
         String digest = digestOf(bytes);
-        // 内容与已登记文件完全一致时不新增记录，而是“覆盖”那批旧记录：
-        // 用这次上传的字节替换物理文件，并按当前规则重新解析表头/样例，避免旧记录带着过期的解析结果。
+        // 内容跟已登记的文件一模一样，就不新加记录了，改成把那几条旧记录覆盖一遍：
+        // 换上新字节，再按现在的规则重算表头，免得旧记录挂着过期的解析结果
         List<FileMeta> same = findAllByDigest(digest, bytes.length);
         if (!same.isEmpty()) {
-            FileMeta target = same.stream()
-                    .filter(meta -> original.equals(meta.name))
-                    .findFirst()
-                    .orElse(same.get(0));
-            // 同内容的历史记录可能有很多条（例如 ERP 加班表有 24 条、3 万行），
-            // 表只解析一次，其余记录直接复用解析结果。逐条解析会让上传接口卡十几秒。
+            FileMeta target = same.get(0);
+            for (FileMeta meta : same) {
+                if (original.equals(meta.name)) {
+                    target = meta;
+                    break;
+                }
+            }
+            // 同内容的旧记录可能几十条（ERP 加班表就有 24 条、3 万行），表只解析一次，
+            // 剩下的复用结果，不然上传接口要卡十几秒
             FileMeta parsedOnce = null;
             for (FileMeta meta : same) {
                 parsedOnce = overwrite(meta, bytes, meta.name, role, digest, parsedOnce);
@@ -293,7 +296,8 @@ public class FileService {
         return meta;
     }
 
-    // 覆盖旧记录：用新上传的字节替换物理文件，再用当前解析规则重算表头、样例、场景，
+    // 覆盖旧记录：用新字节替换物理文件，再按现在的规则重算表头、样例和场景；
+    // parsedOnce 不为空就直接拿它，省得每条都重新解析一遍
     private FileMeta overwrite(FileMeta meta, byte[] bytes, String original, String role, String digest,
                                FileMeta parsedOnce) {
         Path target = paths.uploadPath(meta.storedName);
@@ -381,7 +385,13 @@ public class FileService {
             return "overtime";
         }
         if (suggested.containsKey("leave_type") || suggested.containsKey("start_time")) {
-            boolean target = headers.stream().anyMatch(h -> TextUtils.norm(h).contains("免打卡"));
+            boolean target = false;
+            for (String header : headers) {
+                if (TextUtils.norm(header).contains("免打卡")) {
+                    target = true;
+                    break;
+                }
+            }
             return target ? "target_template" : "leave_request";
         }
         return "unknown";
@@ -401,7 +411,12 @@ public class FileService {
 
     public Optional<FileMeta> find(String fileId) {
         synchronized (this) {
-            return files.stream().filter(f -> f.fileId.equals(fileId)).findFirst();
+            for (FileMeta file : files) {
+                if (file.fileId.equals(fileId)) {
+                    return Optional.of(file);
+                }
+            }
+            return Optional.empty();
         }
     }
 
