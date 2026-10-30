@@ -3,7 +3,7 @@ package com.xingchen.huibiao.model;
 import java.util.ArrayList;
 import java.util.List;
 
-// 可复用的字段映射方案。存的是“目标列 → 源文件名 / 源列名”，
+// 可复用的字段映射方案。里面存的是「目标列 → 源文件名 / 源列名」，下次同类表可以直接套。
 public class MappingScheme {
 
     public String id;

@@ -3,31 +3,28 @@ package com.xingchen.huibiao.model;
 import java.util.ArrayList;
 import java.util.List;
 
-// 智能体配置阶段的产出：解析结果 + 完整执行轨迹 + 自动修正清单。
+// 智能体配置阶段的产物：解析结果 + 执行轨迹 + 自动修补清单
 public class AgentPlan {
 
-    // rules=没用上大模型，纯规则编排；llm=语义模型参与。
+    // rules 表示没调大模型、纯规则排的；llm 表示模型参与过
     public String mode = "rules";
-    // 模型跑完工具循环后的收尾说明，规则模式为空。
+    // 模型收尾时的一句话总结，规则模式是空的
     public String summary = "";
-    // 与 /api/tasks/analyze 完全一致的结构，前端原有逻辑不用改。
+    // 结构和 /api/tasks/analyze 返回的一致，前端拿过去直接用
     public IntentResult intent;
-    // 智能体做了什么、依据是什么。
     public List<AgentStep> steps = new ArrayList<>();
-    // 智能体自动修正的地方，需要人工确认时优先看这里。
+    // 智能体自己改了哪些地方，人工确认时先看这里
     public List<String> fixes = new ArrayList<>();
-    // 命中的历史经验，没有命中为空。
+    // 命中了哪条历史经验，没命中就是空
     public String experienceId = "";
     public String experienceLabel = "";
-    // 交给人工确认的待办提醒。
+    // 需要人为接手处理的提醒
     public List<String> handoff = new ArrayList<>();
-    // 模型工具循环失败、由规则工具链兜底完成时为 true。
+    // 模型那条路失败了、靠规则兜底跑完的，就是 true
     public boolean fallback;
-    // 配置阶段总耗时，毫秒。
     public long durationMs;
-    // 本轮模型 token 用量；供应商未上报时为 0。
+    // 这一轮 token 用量，模型方没上报就是 0
     public int tokensIn;
     public int tokensOut;
-    // 本轮实际发生的模型调用次数。
     public int modelCalls;
 }

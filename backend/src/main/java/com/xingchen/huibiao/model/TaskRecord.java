@@ -5,7 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 一次桥接任务的完整快照。为了少写一层 DTO，前端需要的字段直接放在这里。
+// 一次桥接任务的完整快照。
 public class TaskRecord {
 
     public String id;

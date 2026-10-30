@@ -21,7 +21,7 @@ public class BridgeDataset {
     // scanned / awaiting / planned / running / done / failed
     public String status = "scanned";
     public String instruction = "";
-    // 访问级别，决定规划完之后要不要等人点头：
+    // 访问级别：manual 每次规划完停下来等人点确认，auto 直接跑
     public String access = ACCESS_AUTO;
     // 和智能体的多轮对话：追问为什么这么算、再顺带改一处，都记在这里
     public List<Chat> chat = new ArrayList<>();
@@ -174,11 +174,11 @@ public class BridgeDataset {
         public int rounds;
         // 自动修复的单元格数：全角/空格/零宽字符这类不影响语义的脏值
         public int repairs;
-        // 导出文件所在目录（绝对路径）：跑完会同步一份到前端目录下的 downloads，
+        // 导出文件放在哪个目录（绝对路径）。跑完会再拷一份到前端的 downloads
         public String downloadDir;
     }
 
-    // 一轮对话。role 是 user / agent；action 说明这轮做了什么：
+    // 一轮对话。role 分 user / agent，action 记这轮干了什么（answer / rerun）
     public static class Chat {
         public String role;
         public String text;

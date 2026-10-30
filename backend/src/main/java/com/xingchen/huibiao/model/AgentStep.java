@@ -3,24 +3,22 @@ package com.xingchen.huibiao.model;
 import java.util.ArrayList;
 import java.util.List;
 
-// 智能体的一步操作记录（轨迹）。
+// 智能体每走一步记一条，前端拿这串记录当过程回放看
 public class AgentStep {
 
-    // 步骤序号，从 1 开始。
+    // 第几步，从 1 开始
     public int index;
-    // 阶段：inspect 读取 / recall 记忆 / plan 规划 / tool 执行 / reflect 反思 / fix 修复 / handoff 交人。
+    // inspect 读表 / recall 翻记忆 / plan 规划 / tool 执行 / reflect 反思 / fix 修补 / handoff 转人工
     public String phase = "tool";
-    // 一句话标题，例如“读取源表结构”。
+    // 标题一句话，比如“读取源表结构”；detail 是下面的补充说明
     public String title;
-    // 结论或依据，前端展示在标题下面。
     public String detail;
-    // 工具名，例如 inspect_sources、recall_experience、validate_mapping。
     public String tool;
-    // ok / warn / fail / skip。
+    // ok / warn / fail / skip
     public String status = "ok";
-    // 这步花了多久，毫秒。
+    // 这一步花了多少毫秒
     public long elapsedMs;
-    // 结构化明细，比如“文件、行数、列数”“缺失的必填列”。
+    // 明细条目，比如“3 个文件、12 行、6 列”
     public List<String> items = new ArrayList<>();
 
     public AgentStep() {

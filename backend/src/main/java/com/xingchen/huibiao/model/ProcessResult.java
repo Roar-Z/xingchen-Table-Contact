@@ -5,7 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 一次试算/执行的内存结果。预览只带前 20 行，完整行留给导出。
+// 试算或执行的结果放在内存里。preview 只留前 20 行给页面看，全量 rows 留给导出
 public class ProcessResult {
 
     public List<String> outputColumns = new ArrayList<>();
