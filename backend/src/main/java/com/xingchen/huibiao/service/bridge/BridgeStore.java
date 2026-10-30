@@ -34,25 +34,20 @@ import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-/**
- * 智能体模式的数据集仓库：表本体（xlsx/csv）摊在 data/bridge/datasets/&lt;id&gt;/files 下，
- * 现场快照（扫描结果、规划方案、执行结果）存 SQLite 的 bridge_datasets 表，自定义匹配规则存 kv。
- *
- * 这样列表页不再遍历目录读 meta.json，按时间倒序取最近 100 条就是一条 SQL；
- * 删除数据集时文件目录和数据库记录一起清掉，不会留下读不到的空壳记录。
- * 和 files 索引分开，标准模式的源表不会受到影响。
- */
+// 智能体模式的数据集仓库：表本体（xlsx/csv）摊在 data/bridge/datasets/&lt;
 @Service
 public class BridgeStore {
 
     private static final Logger log = LoggerFactory.getLogger(BridgeStore.class);
     private static final Set<String> TABLE_EXT = Set.of(".xlsx", ".xls", ".csv");
     private static final int MAX_FILES = 300;
-    /** 最近记录最多返回 100 条，与页面上的清理入口配合 */
+    // 最近记录最多返回 100 条，与页面上的清理入口配合
     private static final int MAX_RECENT = 100;
     private static final long MAX_ENTRY_BYTES = 40L * 1024 * 1024;
+    // 国内压缩工具默认按 GBK 存文件名，GB18030 是它的超集，兜底时用它
+    private static final Charset GB18030 = Charset.forName("GB18030");
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    /** 自定义匹配规则是整体读写的小数据，放 kv 表 */
+    // 自定义匹配规则是整体读写的小数据，放 kv 表
     private static final String RULES_SCOPE = "bridge_rules";
 
     private final DataPaths paths;
@@ -65,10 +60,7 @@ public class BridgeStore {
         this.mapper = mapper;
     }
 
-    /**
-     * 老版本把每个数据集的现场写成 datasets/&lt;id&gt;/meta.json、规则写成 bridge/rules.json。
-     * 只在库里还没有这份数据时导入一次，导完把原文件改名留档。
-     */
+    // 老版本把每个数据集的现场写成 datasets/&lt;id&gt;/meta.json、规则写成 bridge/rules.json。
     @PostConstruct
     public void init() {
         migrateLegacyDatasets();
@@ -150,7 +142,7 @@ public class BridgeStore {
         return datasetDir(id).resolve("out");
     }
 
-    /** 自定义字段匹配规则：标准字段 ← 各系统里的叫法，跨数据集复用 */
+    // 自定义字段匹配规则：标准字段 ← 各系统里的叫法，跨数据集复用
     private Path rulesFile() {
         return root().resolve("rules.json");
     }
@@ -206,7 +198,7 @@ public class BridgeStore {
         return dataset;
     }
 
-    /** 最近上传的数据集，给页面做“继续上一单” */
+    // 最近上传的数据集，给页面做“继续上一单”
     public List<BridgeDataset> recent() {
         List<BridgeDataset> list = db.list(
                 "SELECT body FROM bridge_datasets ORDER BY created_at DESC LIMIT ?",
@@ -215,10 +207,7 @@ public class BridgeStore {
         return list;
     }
 
-    /**
-     * 删除一个数据集：整目录连同源表、方案与产出一起清掉，数据库里的现场一起删。
-     * 编号先校验必须落在 datasets 目录内，避免被拼出越界路径。
-     */
+    // 删除一个数据集：整目录连同源表、方案与产出一起清掉，数据库里的现场一起删。
     public synchronized void deleteOne(String id) {
         if (TextUtils.norm(id).isEmpty()) {
             return;
@@ -232,7 +221,7 @@ public class BridgeStore {
         db.update("DELETE FROM bridge_datasets WHERE id = ?", id);
     }
 
-    /** 批量删除；ids 为空表示清空全部数据集。返回实际删除的个数。 */
+    // 批量删除；ids 为空表示清空全部数据集。返回实际删除的个数。
     public synchronized int delete(List<String> ids) {
         Path base = root().resolve("datasets").normalize();
         if (ids == null || ids.isEmpty()) {
@@ -283,10 +272,7 @@ public class BridgeStore {
         }
     }
 
-    /**
-     * 把上传内容摊到 files/ 下：zip 解压、文件夹里选中的文件逐个复制，只留表格。
-     * 返回实际落盘的表格数。
-     */
+    // 把上传内容摊到 files/ 下：zip 解压、文件夹里选中的文件逐个复制，只留表格。
     public int materialize(String datasetId, List<MultipartFile> uploads) {
         Path dir = filesDir(datasetId);
         try {
@@ -318,11 +304,25 @@ public class BridgeStore {
         return saved;
     }
 
+    // 先只看条目名判断压缩包用的是哪套编码：国内压缩工具大多按 GBK 写文件名，
+    private Charset zipCharset(byte[] bytes) {
+        try (ZipInputStream probe = new ZipInputStream(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8)) {
+            while (probe.getNextEntry() != null) {
+                // 只解条目名、不读内容，名字全部解得出来就说明是 UTF-8 包
+            }
+            return StandardCharsets.UTF_8;
+        } catch (IOException | RuntimeException e) {
+            log.info("压缩包文件名不是 UTF-8，改用 GB18030 重试：{}", e.getMessage());
+            return GB18030;
+        }
+    }
+
     private int unzip(byte[] bytes, Path target) {
-        int count = unzip(bytes, target, StandardCharsets.UTF_8);
-        if (count == 0) {
-            // 国内很多压缩工具用 GBK 存文件名，UTF-8 读不出来时再试一次
-            count = unzip(bytes, target, Charset.forName("GBK"));
+        Charset charset = zipCharset(bytes);
+        int count = unzip(bytes, target, charset);
+        if (count == 0 && StandardCharsets.UTF_8.equals(charset)) {
+            // 名字里混了两种编码、恰好没被探测到的情况，用 GB18030 再解一次兜底
+            count = unzip(bytes, target, GB18030);
         }
         return count;
     }
@@ -343,8 +343,10 @@ public class BridgeStore {
                 writeFile(target, name, data);
                 count++;
             }
-        } catch (IOException e) {
-            throw new IllegalStateException("解压压缩包失败：" + e.getMessage(), e);
+        } catch (IOException | RuntimeException e) {
+            // 加密压缩包、损坏的包都在这里落地，给一句能照着做的提示，不要抛英文的 JDK 异常
+            throw new IllegalStateException("压缩包解析失败：" + e.getMessage()
+                    + "。如果压缩包设置了密码或格式不常见，请先解压成表格再上传", e);
         }
         return count;
     }
@@ -362,7 +364,7 @@ public class BridgeStore {
         return out.toByteArray();
     }
 
-    /** 同名文件加序号，避免后上传的把前面的覆盖掉 */
+    // 同名文件加序号，避免后上传的把前面的覆盖掉
     private void writeFile(Path dir, String name, byte[] bytes) {
         String base = name;
         String ext = "";
@@ -408,7 +410,7 @@ public class BridgeStore {
         return TABLE_EXT.stream().anyMatch(lower::endsWith);
     }
 
-    /* ==================== 自定义匹配规则 ==================== */
+    // ==================== 自定义匹配规则 ====================
 
     public List<Map<String, String>> rules() {
         String body = db.kv(RULES_SCOPE);
@@ -425,7 +427,7 @@ public class BridgeStore {
         }
     }
 
-    /** 同一个别名只留一条，重复保存时按最新覆盖 */
+    // 同一个别名只留一条，重复保存时按最新覆盖
     public synchronized List<Map<String, String>> addRule(String standard, String alias) {
         List<Map<String, String>> rules = rules();
         String key = TextUtils.norm(alias);

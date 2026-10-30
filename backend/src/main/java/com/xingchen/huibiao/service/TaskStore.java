@@ -22,14 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * 任务仓库。落 SQLite（data/huibiao.db）：
- * 列表要按时间倒序、按状态筛选，所以 name/status/created_at/finished_at 单独成列，
- * 源表、产物、预览、异常这些嵌套结构放在 body 里，一次写入整体保持一致。
- *
- * 所有写操作走同一个事务，程序被中断时不会留下半条任务；
- * 内存里仍缓存一份，读接口不必每次都查库。
- */
+// 任务仓库。落 SQLite（data/huibiao.db）：
 @Service
 public class TaskStore {
 
@@ -63,7 +56,7 @@ public class TaskStore {
         log.info("任务仓库已加载 {} 条", tasks.size());
     }
 
-    /** 老版本的 tasks.json 只在库里还空着时导入一次，导完把原文件改名留档。 */
+    // 老版本的 tasks.json 只在库里还空着时导入一次，导完把原文件改名留档。
     private void migrateLegacy() {
         Path legacy = paths.tasksFile();
         if (!db.isEmpty("tasks") || !Files.isRegularFile(legacy)) {
@@ -123,9 +116,7 @@ public class TaskStore {
         save();
     }
 
-    /**
-     * 批量删除，一个事务里删完。返回真正删掉的条数。
-     */
+    // 批量删除，一个事务里删完。返回真正删掉的条数。
     public synchronized int removeAll(List<String> ids) {
         if (ids == null || ids.isEmpty()) {
             return 0;

@@ -5,9 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 上传文件的元信息。真正的内容留在 uploads 目录，这里只存表头、样例和行数。
- */
+// 上传文件的元信息。真正的内容留在 uploads 目录，这里只存表头、样例和行数。
 public class FileMeta {
 
     public String fileId;
@@ -15,7 +13,7 @@ public class FileMeta {
     public String storedName;
     public String ext;
     public long size;
-    /** 内容指纹（SHA-256 十六进制）。同一个文件重复上传时靠它判定，避免列表里出现两条一样的表 */
+    // 内容指纹（SHA-256 十六进制）。同一个文件重复上传时靠它判定，避免列表里出现两条一样的表
     public String digest;
     public String role = "auto";
     public String roleLabel = "自动识别";

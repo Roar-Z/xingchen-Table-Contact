@@ -25,15 +25,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 表格读写。解析时保留源表行号，导出时按目标系统的习惯写表头和列宽。
- */
+// 表格读写。解析时保留源表行号，导出时按目标系统的习惯写表头和列宽。
 @Service
 public class ExcelService {
 
@@ -203,11 +200,7 @@ public class ExcelService {
         return new SheetData(sheetName, headerIndex, headers, rows, List.of());
     }
 
-    /**
-     * 找表头行。先按业务别名打分；一张任意表（食堂价格表、设备台账之类）命中不了别名时，
-     * 退化成“最靠前的、非空单元格足够密的一行”：合并单元格的标题行通常只有 1 个非空值，
-     * 真正的表头能把大部分列都填上，这样就不会把标题当表头、把真表头当数据行。
-     */
+    // 找表头行。先按业务别名打分；一张任意表（食堂价格表、设备台账之类）命中不了别名时，
     private int detectHeaderIndex(List<List<String>> rawRows, HeaderCatalog catalog,
                                   Map<String, List<String>> aliases) {
         int limit = Math.min(rawRows.size(), 12);
@@ -249,7 +242,7 @@ public class ExcelService {
         return count;
     }
 
-    /** 表头单元格去掉换行和多余空格，多行表头在页面上会撑得很高。 */
+    // 表头单元格去掉换行和多余空格，多行表头在页面上会撑得很高。
     private String cleanHeader(String raw) {
         if (raw == null) {
             return "";
@@ -267,18 +260,14 @@ public class ExcelService {
         return false;
     }
 
-    /**
-     * 写 .xls，给只认 HSSF 的老 HR 系统用。
-     */
+    // 写 .xls，给只认 HSSF 的老 HR 系统用。
     public void writeXls(Path path, List<String> headers, List<List<Object>> rows) throws IOException {
         try (Workbook workbook = new HSSFWorkbook()) {
             writeWorkbook(workbook, path, headers, rows);
         }
     }
 
-    /**
-     * 写 .xlsx，给人工复核和存档用。
-     */
+    // 写 .xlsx，给人工复核和存档用。
     public void writeXlsx(Path path, List<String> headers, List<List<Object>> rows) throws IOException {
         try (Workbook workbook = new XSSFWorkbook()) {
             writeWorkbook(workbook, path, headers, rows);
@@ -325,18 +314,6 @@ public class ExcelService {
         log.info("写出文件 {}（{} 行）", path.getFileName(), rows.size());
     }
 
-    public List<Map<String, Object>> mapRows(List<String> headers, List<Map<String, Object>> rows) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> ordered = new LinkedHashMap<>();
-            for (String header : headers) {
-                ordered.put(header, row.get(header));
-            }
-            result.add(ordered);
-        }
-        return result;
-    }
-
     public List<List<Object>> toCells(List<String> headers, List<Map<String, String>> rows) {
         List<List<Object>> result = new ArrayList<>();
         for (Map<String, String> row : rows) {
@@ -354,12 +331,5 @@ public class ExcelService {
             return List.of();
         }
         return new ArrayList<>(rows.get(0).keySet());
-    }
-
-    public static List<String> splitCsv(String text) {
-        if (text == null || text.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(text.split("[,，]")).map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 }

@@ -15,9 +15,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
 
-/**
- * 统一返回 {"detail": "..."}，前端只要读 detail 就能把提示显示出来。
- */
+// 统一返回 {"detail": "..."}，前端只要读 detail 就能把提示显示出来。
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
@@ -33,17 +31,13 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("detail", message(e, "当前状态不允许继续操作")));
     }
 
-    /**
-     * 请求体为空或 JSON 写错时，返回 400 而不是掉进兜底变成 500。
-     */
+    // 请求体为空或 JSON 写错时，返回 400 而不是掉进兜底变成 500。
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> unreadable(HttpMessageNotReadableException e) {
         return ResponseEntity.badRequest().body(Map.of("detail", "请求内容不完整，请刷新页面后重试"));
     }
 
-    /**
-     * 用表单或别的方式提交 JSON 接口时，同样给一句看得懂的提示，而不是 500。
-     */
+    // 用表单或别的方式提交 JSON 接口时，同样给一句看得懂的提示，而不是 500。
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<Map<String, Object>> unsupported(HttpMediaTypeNotSupportedException e) {
         return ResponseEntity.badRequest().body(Map.of("detail", "请求内容格式不对，请刷新页面后重试"));
@@ -55,28 +49,21 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(e.getStatusCode()).body(Map.of("detail", detail));
     }
 
-    /**
-     * 静态资源或接口路径写错时返回 404，不要掉进下面的兜底变成 500。
-     */
+    // 静态资源或接口路径写错时返回 404，不要掉进下面的兜底变成 500。
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Map<String, Object>> notFound(NoResourceFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("detail", "没有找到这个资源：" + e.getResourcePath()));
     }
 
-    /**
-     * 接口存在但不支持这个方法，例如对任务调 DELETE。
-     */
+    // 接口存在但不支持这个方法，例如对任务调 DELETE。
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<Map<String, Object>> methodNotAllowed(HttpRequestMethodNotSupportedException e) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(Map.of("detail", "这个接口不支持 " + e.getMethod() + " 请求"));
     }
 
-    /**
-     * 上传的数据集超过 multipart 限制（application.yml 里 30MB / 60MB）。
-     * 直接说清楚，比抛一个看不懂的 500 好。
-     */
+    // 上传的数据集超过 multipart 限制（application.yml 里 30MB / 60MB）。
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, Object>> tooLarge(MaxUploadSizeExceededException e) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)

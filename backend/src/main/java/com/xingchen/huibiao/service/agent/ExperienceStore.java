@@ -20,16 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 智能体的“经验记忆”。
- *
- * 每跑成功一单，就把这次“场景 + 模板 + 源表列 + 映射”记一条；下次遇到同类表，
- * 先用这些历史配置补齐当前映射的缺口，再交给规则/大模型兜底。
- * 没有向量库，用“模板名 + 场景 + 列名重合度”做检索，单机演示足够，也能解释清楚。
- *
- * 数据整体读写、条数很少（最多 30 条），所以落 SQLite 的 kv 表（scope = experiences），
- * 不单开一张表；写入是原子的，不会出现写一半的 JSON。
- */
+// 智能体的“经验记忆”。
 @Service
 public class ExperienceStore {
 
@@ -67,7 +58,7 @@ public class ExperienceStore {
         }
     }
 
-    /** 老版本的 agent-experience.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    // 老版本的 agent-experience.json 只在库里没有这份数据时导入一次，导完改名留档。
     private void migrateLegacy() {
         Path file = paths.agentExperienceFile();
         if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
@@ -88,9 +79,7 @@ public class ExperienceStore {
         return new ArrayList<>(items);
     }
 
-    /**
-     * 找最像的一条历史经验：模板名一致最重要，其次是场景和源表列的重合度。
-     */
+    // 找最像的一条历史经验：模板名一致最重要，其次是场景和源表列的重合度。
     public Item bestMatch(String scene, String templateName, List<String> sourceColumns) {
         Item best = null;
         double bestScore = 0;
@@ -128,9 +117,7 @@ public class ExperienceStore {
         return union.isEmpty() ? 0 : same * 1d / union.size();
     }
 
-    /**
-     * 学一次经验。完全相同的配置只累加次数，不重复占位置。
-     */
+    // 学一次经验。完全相同的配置只累加次数，不重复占位置。
     public Item learn(String scene, String templateName, List<String> sourceColumns,
                       List<Entry> mapping, String note) {
         if (mapping == null || mapping.isEmpty()) {
@@ -174,6 +161,14 @@ public class ExperienceStore {
         return removed;
     }
 
+    // 「清空运行数据」时一起清掉：经验是跑单过程中沉淀下来的运行期数据，
+    public int clear() {
+        int count = items.size();
+        items.clear();
+        write();
+        return count;
+    }
+
     private String signatureOf(String scene, String templateName, List<Entry> mapping) {
         StringBuilder sb = new StringBuilder();
         sb.append(scene).append('|').append(templateName).append('|');
@@ -186,12 +181,12 @@ public class ExperienceStore {
         return sb.toString();
     }
 
-    /** 整份经验一次原子写入，不会出现写一半的列表。 */
+    // 整份经验一次原子写入，不会出现写一半的列表。
     private void write() {
         db.kvPut(SCOPE, items);
     }
 
-    /** 一条经验里的一个映射，只记文件名和列名，换机器、换 fileId 也能复用。 */
+    // 一条经验里的一个映射，只记文件名和列名，换机器、换 fileId 也能复用。
     public static class Entry {
         public String target;
         public String fileName;
@@ -220,7 +215,7 @@ public class ExperienceStore {
         public List<Entry> mapping = new ArrayList<>();
     }
 
-    /** 给前端看的时候不暴露内部结构，转成简单 Map。 */
+    // 给前端看的时候不暴露内部结构，转成简单 Map。
     public List<Map<String, Object>> summary() {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Item item : items) {

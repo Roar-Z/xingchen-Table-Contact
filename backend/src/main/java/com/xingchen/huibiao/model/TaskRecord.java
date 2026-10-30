@@ -5,9 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 一次桥接任务的完整快照。为了少写一层 DTO，前端需要的字段直接放在这里。
- */
+// 一次桥接任务的完整快照。为了少写一层 DTO，前端需要的字段直接放在这里。
 public class TaskRecord {
 
     public String id;
@@ -34,7 +32,7 @@ public class TaskRecord {
     public List<String> warnings = new ArrayList<>();
     public Map<String, Object> stats = new LinkedHashMap<>();
     public Map<String, Object> config = new LinkedHashMap<>();
-    /** 智能体在执行阶段的动作，比如“结果全为异常 → 按推荐映射重跑一次”。 */
+    // 智能体在执行阶段的动作，比如“结果全为异常 → 按推荐映射重跑一次”。
     public List<AgentStep> agentSteps = new ArrayList<>();
 
     public static class SourceRef {

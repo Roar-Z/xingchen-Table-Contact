@@ -20,18 +20,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 映射方案仓库：整体读写的小数据，落在 SQLite 的 kv 表（scope = mapping_schemes）。
- * 不必为它单开一张表，但同样享受事务写入和「一个文件带走全部数据」的好处。
- * 同名方案覆盖保存，最多保留 20 个，避免无限增长。
- */
+// 映射方案仓库：整体读写的小数据，落在 SQLite 的 kv 表（scope = mapping_schemes）。
 @Service
 public class MappingSchemeStore {
 
     private static final Logger log = LoggerFactory.getLogger(MappingSchemeStore.class);
     private static final int MAX_SCHEMES = 20;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-    /** kv 表里的分区名，和别的整体读写数据分开 */
+    // kv 表里的分区名，和别的整体读写数据分开
     private static final String SCOPE = "mapping_schemes";
 
     private final DataPaths paths;
@@ -64,7 +60,7 @@ public class MappingSchemeStore {
         log.info("映射方案已加载 {} 个", schemes.size());
     }
 
-    /** 老版本的 mapping-schemes.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    // 老版本的 mapping-schemes.json 只在库里没有这份数据时导入一次，导完改名留档。
     private void migrateLegacy() {
         Path file = paths.mappingSchemesFile();
         if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
@@ -168,7 +164,7 @@ public class MappingSchemeStore {
         return false;
     }
 
-    /** 一次原子写入：写坏了不会留下半份方案列表。 */
+    // 一次原子写入：写坏了不会留下半份方案列表。
     private void write() {
         db.kvPut(SCOPE, schemes);
     }

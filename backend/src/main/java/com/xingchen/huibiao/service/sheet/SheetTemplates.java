@@ -5,10 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 参考模板：只给列名和一两行示例，用户照着填或者直接改。
- * 内置几套 HR / 车间常用的，省得每次从空白开始。
- */
+// 参考模板：只给列名和一两行示例，用户照着填或者直接改。
 public final class SheetTemplates {
 
     private SheetTemplates() {
@@ -56,9 +53,7 @@ public final class SheetTemplates {
                 .orElseThrow(() -> new IllegalArgumentException("没有这个模板"));
     }
 
-    /**
-     * 按一句话里的关键词猜一个模板，例如“做个考勤表”。
-     */
+    // 按一句话里的关键词猜一个模板，例如“做个考勤表”。
     public static Map<String, Object> guess(String instruction) {
         if (instruction == null) {
             return null;

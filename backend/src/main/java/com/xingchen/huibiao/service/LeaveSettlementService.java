@@ -21,15 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 假期余量结算。核心规则只有三条：
- * 1. 请假时长优先按“天 × 每日工时”，没有天才用“小时”；
- * 2. 事假先扣剩余年假，扣完的部分记为事假，输出两行；
- * 3. 年假表没有这个人，按 0 处理，照常出事假行，但写异常日志。
- *
- * 输出列不再写死：模板列先经 TemplateResolver 翻译成内部字段，再按字段取值，
- * 所以上传的是哪套 HR 模板，导出就是哪套列。
- */
+// 假期余量结算。核心规则只有三条：
 @Service
 public class LeaveSettlementService {
 
@@ -251,10 +243,7 @@ public class LeaveSettlementService {
         return result;
     }
 
-    /**
-     * 关掉脏数据隔离时，问题行照原口径处理（能输出就输出，不能成行的跳过），
-     * 只是不再逐条写进异常日志，导出也就不会带异常文件。
-     */
+    // 关掉脏数据隔离时，问题行照原口径处理（能输出就输出，不能成行的跳过），
     private void hideAnomalies(ProcessResult result, boolean isolate) {
         if (isolate) {
             return;
@@ -266,10 +255,7 @@ public class LeaveSettlementService {
         }
     }
 
-    /**
-     * OA 导出常把“日期”和“时间”拆成两列，映射指错时会取到只有时分秒的那一列。
-     * 这里只要映射列解析不出日期、而源表另有日期列，就自动换回日期列，并留下提示。
-     */
+    // OA 导出常把“日期”和“时间”拆成两列，映射指错时会取到只有时分秒的那一列。
     private String preferDateColumn(ExcelService.SheetData sheet, String mapped, String fallback,
                                     ProcessResult result) {
         if (mapped != null && hasDateValue(sheet, mapped)) {
@@ -292,10 +278,7 @@ public class LeaveSettlementService {
         return false;
     }
 
-    /**
-     * 模板列先核对一遍：翻译不了的列、源表里找不到的必填列，严格模式下直接报错，
-     * 普通模式只给提示，让业务先看到结果再改模板。
-     */
+    // 模板列先核对一遍：翻译不了的列、源表里找不到的必填列，严格模式下直接报错，
     private void checkTemplate(IntentResult plan, TaskConfig config, ProcessResult result,
                                String empCol, String nameCol, String deptCol, String posCol,
                                String startDateCol, String endDateCol, String daysCol, String hoursCol,
@@ -429,9 +412,7 @@ public class LeaveSettlementService {
         return config == null || config.isolateAnomaly() == null || config.isolateAnomaly();
     }
 
-    /**
-     * 按内部字段名找映射。模板列叫“员工编号”还是“工号”都无所谓，先翻译成键再比对。
-     */
+    // 按内部字段名找映射。模板列叫“员工编号”还是“工号”都无所谓，先翻译成键再比对。
     private String mapped(TaskConfig config, String key, String fileId, String fallback) {
         if (config == null || config.mapping() == null) {
             return fallback;

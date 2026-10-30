@@ -1,16 +1,11 @@
 <script setup>
-/**
- * 表格智作 —— 页面主体
- *
- * 左边是「我的表格」清单，右边一张表一张卡片：
- * 上传 / 模板建表 / 一句话建表或融合 / 双击改格子 / 一句话改表 / 分页查询 / 日志。
- * 每张表始终对应一个 xlsx，下载到的文件和页面上看到的完全一致。
- */
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
+// 表格智作 —— 页面主体
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
-import { api, isNetworkError } from '../api'
+import { api, apiState, isNetworkError } from '../api'
+import { OFFLINE_HINT, composeLocalSheet, downloadCsv, loadLocalSheets, makeLocalSheet, readTable, saveLocalSheets } from '../offline'
 import { clearNotice, showNotice } from '../appNotice'
 import { useToast } from '../toast'
 import { clearTopbar, useTopbar } from '../topbar'
@@ -26,9 +21,22 @@ const { show } = useToast()
 function mountTopbar() {
   useTopbar({
     title: '表格智作',
-    desc: '上传 Excel 直接改，或者用一句话建表、合并；每张表都是一份独立的文件，改完就能下载。'
+    desc: offlineMode.value
+      ? '当前离线：Excel / CSV 在本地解析，按规则建表、合并，结果下载为 CSV；联网后自动切回在线模式。'
+      : '上传 Excel 直接改，或者用一句话建表、合并；每张表都是一份独立的文件，改完就能下载。',
+    // 建表入口放在右上角，和「我的仓库」并排；页面里不再重复摆一个同名按钮。
+    // 离线时「新建空白表」要连后端建文件，先不给按钮，改用页面里的本地建表
+    actions: offlineMode.value
+      ? []
+      : [{ key: 'blank', label: '新建空白表', icon: 'plus', hint: '填列名新建一张空表' }],
+    onAction: (key) => {
+      if (key === 'blank') openDialog('blank')
+    }
   })
 }
+
+// 断网/恢复会改变顶栏说明和按钮，切一下状态就重新挂一次
+watch(() => apiState.online, () => mountTopbar())
 
 onBeforeUnmount(() => clearTopbar())
 
@@ -56,7 +64,7 @@ const uploadBusy = ref(false)
 const fileInput = ref(null)
 let searchTimer = null
 
-/* ==================== 一句话 ==================== */
+// ==================== 一句话 ====================
 const composerText = ref('')
 const composerInput = ref(null)
 const composerBusy = ref(false)
@@ -70,6 +78,162 @@ const composerSamples = [
   '新建一张月度费用表，列：日期、部门、金额、备注',
   '把选中的两张表按工号合并'
 ]
+
+// ==================== 离线模式 ====================
+const offlineMode = computed(() => apiState.online === false)
+const localTables = ref([])
+const localSelected = ref([])
+const localOpen = ref('')
+const localBusy = ref(false)
+const localDragging = ref(false)
+const localFileInput = ref(null)
+const offlineText = ref('')
+const offlineError = ref('')
+
+const offlineSamples = [
+  '新建一张表，列：检查日期、车间、负责人、检查结果、整改期限',
+  '新建一张月度费用表，列：日期、部门、金额、备注',
+  '把选中的两张表按车间合并',
+  '把选中的两张表按日期合并'
+]
+
+// 勾选两张以上时告诉用户「这几张表共有哪些列」，按哪一列合并都能自己说，
+const localJoinHint = computed(() => {
+  const picked = localTables.value.filter((item) => localSelected.value.includes(item.id))
+  if (picked.length < 2) return ''
+  const shared = picked[0].columns.filter((column) => picked.every((item) => item.columns.includes(column)))
+  if (!shared.length) return '这几张表没有同名的列，只能按列名并排拼起来'
+  const shown = shared.slice(0, 8).join('、') + (shared.length > 8 ? ` 等 ${shared.length} 列` : '')
+  return `共有列：${shown}（说「按其中的列合并」即可，如「按车间合并」）`
+})
+
+const openLocalTable = computed(() => localTables.value.find((item) => item.id === localOpen.value) || null)
+
+function loadLocal() {
+  localTables.value = loadLocalSheets()
+  if (!localTables.value.some((item) => item.id === localOpen.value)) {
+    localOpen.value = localTables.value[0] ? localTables.value[0].id : ''
+  }
+}
+
+function persistLocal() {
+  saveLocalSheets(localTables.value)
+}
+
+function localMeta(table) {
+  return `${table.rows.length} 行 · ${table.columns.length} 列 · ${table.updated_at}`
+}
+
+// 预览只给前 30 行：离线表可能有几千行，整表渲染既慢又没意义
+function localPreviewRows(table) {
+  return (table.rows || []).slice(0, 30)
+}
+
+function toggleLocalSelect(id) {
+  localSelected.value = localSelected.value.includes(id)
+    ? localSelected.value.filter((item) => item !== id)
+    : [...localSelected.value, id]
+}
+
+function pickLocalFiles() {
+  localFileInput.value?.click()
+}
+
+async function addLocalFiles(files) {
+  const list = Array.from(files || [])
+  if (!list.length || localBusy.value) return
+  localBusy.value = true
+  try {
+    for (const file of list) {
+      try {
+        const table = await readTable(file)
+        const base = file.name.replace(/\.(xlsx|xls|csv|tsv|txt)$/i, '')
+        // 同名再传当作更新：删掉旧的，用新解析的结果（和在线接口的覆盖语义一致）
+        localTables.value = localTables.value.filter((item) => item.name !== base)
+        localTables.value = [
+          { ...makeLocalSheet(base, table.columns, table.rows), origin: 'upload' },
+          ...localTables.value
+        ]
+      } catch (err) {
+        show(err.message, 'err')
+      }
+    }
+    if (localTables.value.length) {
+      localOpen.value = localTables.value[0].id
+      persistLocal()
+    }
+  } finally {
+    localBusy.value = false
+  }
+}
+
+function onLocalFiles(event) {
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+  addLocalFiles(files)
+}
+
+function onLocalDrop(event) {
+  localDragging.value = false
+  addLocalFiles(event.dataTransfer?.files)
+}
+
+// 拖到子元素上时 dragleave 也会冒泡，直接置 false 会让高亮闪一下；只有真的离开整块才复位
+function onLocalDragLeave(event) {
+  const next = event.relatedTarget
+  if (!next || !event.currentTarget?.contains(next)) localDragging.value = false
+}
+
+function runOfflineComposer() {
+  const text = offlineText.value.trim()
+  if (!text || localBusy.value) return
+  offlineError.value = ''
+  try {
+    const picked = localTables.value.filter((item) => localSelected.value.includes(item.id))
+    const result = composeLocalSheet(text, picked)
+    if (result.kind === 'merge') {
+      localTables.value = localTables.value.filter((item) => !localSelected.value.includes(item.id))
+      localSelected.value = []
+    }
+    localTables.value = [result.sheet, ...localTables.value]
+    localOpen.value = result.sheet.id
+    offlineText.value = ''
+    persistLocal()
+    show(result.kind === 'merge'
+      ? `已按${result.key ? `「${result.key}」` : '列名并排'}合并成「${result.sheet.name}」，共 ${result.sheet.rows.length} 行`
+      : `已在本地建好「${result.sheet.name}」，列名共 ${result.sheet.columns.length} 个`)
+  } catch (err) {
+    offlineError.value = err.message
+  }
+}
+
+function fillOffline(text) {
+  offlineText.value = text
+}
+
+function removeLocal(table) {
+  if (!window.confirm(`确定删除本地的「${table.name}」？只删浏览器里这份，不影响在线数据。`)) return
+  localTables.value = localTables.value.filter((item) => item.id !== table.id)
+  localSelected.value = localSelected.value.filter((id) => id !== table.id)
+  if (localOpen.value === table.id) localOpen.value = localTables.value[0] ? localTables.value[0].id : ''
+  persistLocal()
+}
+
+function downloadLocal(table) {
+  downloadCsv(table.name, table.columns, table.rows)
+  show(`已导出「${table.name}」为 CSV`)
+}
+
+watch(offlineMode, (off) => {
+  if (off) {
+    loadLocal()
+    // 离线时不请求后端，骨架屏和错误提示都不该留在屏幕上
+    loading.value = false
+    clearNotice()
+  } else {
+    loadTables(true)
+  }
+})
 
 // 每张表下方的改表输入框，填字后要能自动聚焦
 const draftInputs = {}
@@ -89,10 +253,7 @@ function fillComposer(text) {
   })
 }
 
-/**
- * 左栏勾选两张以上后点「合并选中」：展开一句话输入框，把说法填好并把光标放到末尾，
- * 用户还能补一句用哪一列对齐，然后再点「生成」——不会直接替他执行。
- */
+// 左栏勾选两张以上后点「合并选中」：展开一句话输入框，把说法填好并把光标放到末尾，
 function startMergeSelected() {
   if (selected.value.length < 2) return
   composerOpen.value = true
@@ -114,7 +275,7 @@ function fillDraft(id, text) {
   })
 }
 
-/* ==================== 弹窗（模板 / 空白表 / 加列 / 重命名 / 删除） ==================== */
+// ==================== 弹窗（模板 / 空白表 / 加列 / 重命名 / 删除） ====================
 const dialog = reactive({
   open: false,
   kind: '',
@@ -139,7 +300,7 @@ function fmtTime(value) {
   return text.length >= 16 ? text.slice(5, 16) : text
 }
 
-/* ==================== 清单 ==================== */
+// ==================== 清单 ====================
 
 async function loadTables(silent = false) {
   if (!silent) loading.value = tables.value.length === 0
@@ -244,7 +405,7 @@ async function removeSelected() {
   }
 }
 
-/* ==================== 上传 ==================== */
+// ==================== 上传 ====================
 
 // 拖进来时高亮边框，和新建任务页的上传区保持一致的手感
 const dragging = ref(false)
@@ -264,6 +425,14 @@ function onDrop(event) {
   dragging.value = false
   const files = Array.from((event.dataTransfer && event.dataTransfer.files) || [])
   uploadFiles(files)
+}
+
+// 拖到子元素上也会触发 dragleave，直接置 false 会让高亮闪烁；
+// 只有真正离开这块区域才收起，避免高亮卡住不消失
+function onDragLeave(event) {
+  const to = event.relatedTarget
+  if (to && event.currentTarget.contains(to)) return
+  dragging.value = false
 }
 
 async function uploadFiles(files) {
@@ -290,7 +459,7 @@ async function uploadFiles(files) {
   }
 }
 
-/* ==================== 一句话：建表 / 融合 / 改表 ==================== */
+// ==================== 一句话：建表 / 融合 / 改表 ====================
 
 async function runComposer(textOverride) {
   const text = String(textOverride == null ? composerText.value : textOverride).trim()
@@ -367,10 +536,7 @@ async function runRevise(id, textOverride) {
   }
 }
 
-/**
- * 按这张表的列给两三条现成的说法，点了就执行，省得用户猜能怎么说。
- * 有数字列优先演示改数和排序，纯文本表演示改文案和删空行。
- */
+// 按这张表的列给两三条现成的说法，点了就执行，省得用户猜能怎么说。
 function editSamples(detail) {
   if (!detail) return []
   const columns = detail.columns || []
@@ -391,7 +557,7 @@ function editSamples(detail) {
   return items.slice(0, 3)
 }
 
-/* ==================== 单表操作 ==================== */
+// ==================== 单表操作 ====================
 
 async function addRow(id) {
   if (cardBusy[id]) return
@@ -444,7 +610,7 @@ async function undo(id) {
   }
 }
 
-/* ==================== 弹窗操作 ==================== */
+// ==================== 弹窗操作 ====================
 
 function openDialog(kind, payload = {}) {
   dialog.open = true
@@ -509,10 +675,16 @@ async function submitDialog() {
   }
 }
 
-/* ==================== 生命周期 ==================== */
+// ==================== 生命周期 ====================
 
 onMounted(async () => {
   mountTopbar()
+  // 断网时不去请求清单：接口必然失败，只会留下一条错误提示和空骨架
+  if (offlineMode.value) {
+    loading.value = false
+    loadLocal()
+    return
+  }
   await loadTables()
   const target = route.query.id
   if (target) {
@@ -529,7 +701,7 @@ onMounted(async () => {
 // 清单和已展开表格的详情都补一次，避免别处增删表后这里还显示旧的行数或已删除的表。
 onActivated(async () => {
   mountTopbar()
-  if (loading.value) return
+  if (loading.value || offlineMode.value) return
   await loadTables(true)
   for (const id of opened.value.slice()) {
     if (!tables.value.some((item) => item.id === id)) {
@@ -562,7 +734,180 @@ onBeforeUnmount(() => {
       @change="onFiles"
     />
 
-    <div class="sw-layout" :class="{ 'is-solo': !tables.length }">
+    <!-- 离线：后端连不上时改用本地表格。结构和在线页一致（左清单 + 右内容）， -->
+    <div v-if="offlineMode" class="sw-layout" :class="{ 'is-solo': !localTables.length }">
+      <input
+        ref="localFileInput"
+        type="file"
+        class="hidden-input"
+        accept=".xlsx,.xls,.csv,.tsv,.txt"
+        multiple
+        @change="onLocalFiles"
+      />
+
+      <aside v-if="localTables.length" class="sw-side">
+        <div class="sw-side-head">
+          <b>本地表格</b>
+          <span class="sw-count">{{ localTables.length }}</span>
+          <span class="offline-chip" :title="OFFLINE_HINT"><i />离线模式</span>
+        </div>
+
+        <div
+          class="sw-drop sw-drop-sm"
+          :class="{ 'is-over': localDragging, 'is-busy': localBusy }"
+          role="button"
+          tabindex="0"
+          @click="pickLocalFiles"
+          @keydown.enter.prevent="pickLocalFiles"
+          @dragenter.prevent="localDragging = true"
+          @dragover.prevent="localDragging = true"
+          @dragleave.prevent="onLocalDragLeave"
+          @dragend="localDragging = false"
+          @drop.prevent="onLocalDrop"
+        >
+          <span class="sw-drop-icon"><Icon name="upload" :size="16" /></span>
+          <b>{{ localBusy ? '正在读表…' : '导入表格' }}</b>
+          <span class="sw-drop-sub">拖入或点击选择 · .xlsx / .xls / .csv</span>
+        </div>
+
+        <ul class="sw-list">
+          <li
+            v-for="item in localTables"
+            :key="item.id"
+            class="sw-list-item"
+            :class="{ on: localOpen === item.id }"
+          >
+            <label class="sw-check" title="勾选后可以合并" @click.stop>
+              <input
+                type="checkbox"
+                :checked="localSelected.includes(item.id)"
+                @change="toggleLocalSelect(item.id)"
+              />
+            </label>
+            <button class="sw-list-main" @click="localOpen = item.id">
+              <span class="sw-list-name">{{ item.name }}</span>
+              <span class="sw-list-meta">{{ localMeta(item) }}</span>
+            </button>
+            <span class="tag tag-neutral sw-origin">本地</span>
+          </li>
+        </ul>
+
+        <div class="sw-side-foot">
+          <template v-if="localSelected.length">
+            <span class="sw-foot-count">已选 {{ localSelected.length }} 张</span>
+            <span class="sw-muted">在下方输入「合并选中的表」</span>
+          </template>
+          <template v-else>勾选两张表可以按工号合并</template>
+        </div>
+      </aside>
+
+      <section class="sw-main">
+        <!-- 空状态整块就是拖拽区：没有表格时左栏的上传区还没出现， -->
+        <div
+          v-if="!localTables.length"
+          class="panel sw-empty"
+          :class="{ 'is-over': localDragging }"
+          @dragenter.prevent="localDragging = true"
+          @dragover.prevent="localDragging = true"
+          @dragleave.prevent="onLocalDragLeave"
+          @dragend="localDragging = false"
+          @drop.prevent="onLocalDrop"
+        >
+          <span class="sw-empty-icon"><Icon name="upload" :size="24" /></span>
+          <b>{{ localDragging ? '松手就能开始解析' : '把表格拖到这里' }}</b>
+          <p>
+            当前离线，拖入或选择 Excel / CSV 后在浏览器里解析，不会上传；
+            建表、合并结果可随时导出 CSV。
+          </p>
+          <button class="btn" @click="pickLocalFiles">
+            <Icon name="upload" :size="13" /> 选择文件
+          </button>
+          <span class="sw-empty-hint">支持 .xlsx / .xls / .csv / .tsv / .txt，可一次拖入多个</span>
+        </div>
+
+        <article v-else-if="openLocalTable" class="sw-card">
+          <header class="sw-card-head">
+            <div class="sw-card-title">
+              <Icon name="table" :size="15" />
+              <b>{{ openLocalTable.name }}</b>
+              <span class="tag tag-neutral">{{ openLocalTable.origin === 'upload' ? '本地导入' : '本地生成' }}</span>
+              <span class="sw-card-meta">{{ localMeta(openLocalTable) }}</span>
+            </div>
+            <div class="sw-card-actions">
+              <button class="btn btn-sm" @click="downloadLocal(openLocalTable)">
+                <Icon name="download" :size="13" />下载 CSV
+              </button>
+              <button class="icon-btn" title="删除这张本地表" @click="removeLocal(openLocalTable)">
+                <Icon name="trash" :size="14" />
+              </button>
+            </div>
+          </header>
+
+          <p class="sw-card-sub">
+            <span>离线只预览前 30 行；下载 CSV 会导出这张表的全部 {{ openLocalTable.rows.length }} 行。</span>
+          </p>
+
+          <div class="sw-local-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>{{ openLocalTable.columns.length }} 列</th>
+                  <th v-for="column in openLocalTable.columns" :key="column">{{ column }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in localPreviewRows(openLocalTable)" :key="index">
+                  <td class="sw-local-no">{{ index + 1 }}</td>
+                  <td v-for="(cell, i) in row" :key="i">{{ cell }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <div v-else class="panel sw-empty">
+          <span class="sw-empty-icon"><Icon name="table" :size="24" /></span>
+          <b>从左边点开一张表</b>
+          <p>看数据、导出 CSV，或者用下面那句话新建 / 合并本地表。</p>
+        </div>
+
+        <!-- 本地一句话：只认「新建…列：…」和「合并选中的表（可指定按哪一列）」两种规则 -->
+        <div class="sw-compose">
+          <div class="sw-compose-head">
+            <b>一句话（本地）</b>
+            <span>离线不调用大模型，只认「新建…列：…」和「把选中的表按某一列合并」两种说法，按哪一列都行</span>
+          </div>
+          <div class="sw-compose-row">
+            <input
+              v-model="offlineText"
+              class="sw-compose-input"
+              type="text"
+              placeholder="例如：新建一张表，列：检查日期、车间、负责人；或把选中的表按车间合并"
+              @keydown.enter="runOfflineComposer"
+            />
+            <button class="btn btn-primary" :disabled="!offlineText.trim()" @click="runOfflineComposer">
+              生成
+            </button>
+          </div>
+          <p v-if="localJoinHint" class="sw-compose-hint">{{ localJoinHint }}</p>
+          <div class="sw-samples">
+            <span>示例</span>
+            <button
+              v-for="text in offlineSamples"
+              :key="text"
+              class="sw-chip"
+              title="点一下填入输入框，不会直接发送"
+              @click="fillOffline(text)"
+            >
+              {{ text }}
+            </button>
+          </div>
+          <p v-if="offlineError" class="sw-err">{{ offlineError }}</p>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="!offlineMode" class="sw-layout" :class="{ 'is-solo': !tables.length }">
       <!-- 首次加载时不要先摆一个空清单壳子，否则屏幕上是两块空面板并排闪一下 -->
       <aside v-if="tables.length" class="sw-side">
         <div class="sw-side-head">
@@ -598,7 +943,8 @@ onBeforeUnmount(() => {
           @keydown.enter.prevent="pickFiles"
           @dragenter.prevent="dragging = true"
           @dragover.prevent="dragging = true"
-          @dragleave.prevent="dragging = false"
+          @dragleave.prevent="onDragLeave"
+          @dragend="dragging = false"
           @drop.prevent="onDrop"
         >
           <span class="sw-drop-icon"><Icon name="upload" :size="16" /></span>
@@ -666,18 +1012,11 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="sw-main">
-        <div class="sw-tools">
+        <!-- 建表入口已收到顶栏；这里只留展开/收起，没有表格时不占一行 -->
+        <div v-if="tables.length" class="sw-tools">
           <div class="sw-tools-left">
-            <button class="btn" @click="openDialog('blank')">
-              <Icon name="plus" :size="14" />新建空白表
-            </button>
-          </div>
-          <div class="sw-tools-right">
-            <button v-if="tables.length" class="btn-text" @click="openAll">全部展开</button>
+            <button class="btn-text" @click="openAll">全部展开</button>
             <button v-if="opened.length" class="btn-text" @click="closeAll">全部收起</button>
-            <router-link class="btn btn-sm" to="/sheets/repo">
-              <Icon name="folder" :size="13" />我的仓库
-            </router-link>
           </div>
         </div>
 
@@ -714,10 +1053,11 @@ onBeforeUnmount(() => {
               @keydown.enter.prevent="pickFiles"
               @dragenter.prevent="dragging = true"
               @dragover.prevent="dragging = true"
-              @dragleave.prevent="dragging = false"
+              @dragleave.prevent="onDragLeave"
+              @dragend="dragging = false"
               @drop.prevent="onDrop"
             >
-              <span class="sw-drop-icon"><Icon name="upload" :size="19" /></span>
+              <span class="sw-drop-icon"><Icon name="upload" :size="28" /></span>
               <b>{{ uploadBusy ? '正在读表…' : '上传 Excel' }}</b>
               <span class="sw-drop-sub">拖入或点击选择，可多选 · .xlsx / .xls</span>
             </div>
@@ -857,7 +1197,7 @@ onBeforeUnmount(() => {
         <div v-if="showComposer" class="sw-compose">
           <div class="sw-compose-head">
             <b>一句话</b>
-            <span>新建就说清列名；融合先勾选表格；示例只把说法填进输入框，确认后点「生成」发送</span>
+            <span>新建就说清列名；融合先勾选表格并说明按哪一列；示例只把说法填进输入框，确认后点「生成」发送</span>
             <button v-if="opened.length" class="btn-text sw-compose-close" @click="composerOpen = false">
               收起
             </button>
@@ -1054,19 +1394,19 @@ onBeforeUnmount(() => {
   gap: 4px;
   align-items: center;
   padding: 14px 12px;
-  border: 1px dashed #d5dcea;
+  border: 1px dashed #dcdfe6;
   border-radius: 10px;
-  background: #fbfcfe;
+  background: #fff;
   text-align: center;
   cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  transition: border-color 0.18s ease, background 0.18s ease;
 }
 
+/* hover / 拖入只加深一圈虚线，不整块铺蓝底、不加彩色投影 */
 .sw-drop:hover,
 .sw-drop.is-over {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 4px 14px rgb(43 95 217 / 8%);
+  border-color: #a8b3c2;
+  background: #fafafa;
 }
 
 .sw-drop.is-busy {
@@ -1080,11 +1420,10 @@ onBeforeUnmount(() => {
   width: 34px;
   height: 34px;
   margin-bottom: 2px;
-  border: 1px solid #e0e6f2;
+  border: 1px solid #e4e7ed;
   border-radius: 9px;
   background: #fff;
-  box-shadow: 0 1px 2px rgb(20 30 50 / 4%);
-  color: var(--accent);
+  color: #606266;
 }
 
 .sw-drop b {
@@ -1110,9 +1449,26 @@ onBeforeUnmount(() => {
 }
 
 .sw-drop-lg {
+  gap: 8px;
   width: 100%;
-  max-width: 520px;
-  padding: 40px 22px;
+  max-width: 760px;
+  padding: 64px 28px;
+}
+
+.sw-drop-lg .sw-drop-icon {
+  width: 52px;
+  height: 52px;
+  margin-bottom: 6px;
+  border-radius: 12px;
+}
+
+.sw-drop-lg b {
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.sw-drop-lg .sw-drop-sub {
+  font-size: 13px;
 }
 
 .sw-list {
@@ -1253,13 +1609,13 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 12px;
   align-items: center;
-  justify-content: space-between;
+  /* 建表入口上移后，这里只剩展开/收起，沿用原来的靠右位置 */
+  justify-content: flex-end;
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
 
-.sw-tools-left,
-.sw-tools-right {
+.sw-tools-left {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -1344,6 +1700,14 @@ onBeforeUnmount(() => {
   border-color: var(--accent);
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* 勾选两张以上时列出共有的列，用户照着说「按车间合并」就行 */
+.sw-compose-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
 }
 
 .sw-samples {
@@ -1472,11 +1836,23 @@ onBeforeUnmount(() => {
   line-height: 1.75;
 }
 
+/* 空状态本身就是拖拽区：拖到上面时整块描边加深，告诉用户松手就会解析 */
+.sw-empty.is-over {
+  border-color: #a8b3c2;
+  background: #fafafa;
+}
+
+.sw-empty-hint {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
 /* 没有标题时的说明行：作为上传区的引导语，位置稍靠下 */
 .sw-empty-lead {
-  margin: 4px 0 20px;
+  margin: 4px 0 22px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -1550,6 +1926,45 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
   padding: 10px 14px 0;
+}
+
+/* 离线预览：只读表格，横向可滚，首列是行号 */
+.sw-local-table {
+  overflow: auto;
+  max-height: 460px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.sw-local-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sw-local-table th,
+.sw-local-table td {
+  padding: 6px 10px;
+  border-right: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-2);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sw-local-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f5f8fd;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.sw-local-table .sw-local-no {
+  width: 46px;
+  background: #fafbfc;
+  color: var(--muted);
+  text-align: center;
 }
 
 .sw-card-edit input {

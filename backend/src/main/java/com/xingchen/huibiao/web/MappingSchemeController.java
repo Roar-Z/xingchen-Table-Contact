@@ -16,9 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 映射方案的保存 / 加载 / 删除。方案存服务端，换浏览器也能复用。
- */
+// 映射方案的保存 / 加载 / 删除。方案存服务端，换浏览器也能复用。
 @RestController
 @RequestMapping("/api/mapping-schemes")
 public class MappingSchemeController {

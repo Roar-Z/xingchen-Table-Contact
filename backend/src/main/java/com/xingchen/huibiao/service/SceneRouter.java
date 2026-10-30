@@ -10,10 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
-/**
- * 场景路由。解析结果和用户手动配置冲突时，以用户选的场景为准，
- * 但筛选条件（部门、日期）还是沿用解析出来的值。
- */
+// 场景路由。解析结果和用户手动配置冲突时，以用户选的场景为准，
 @Service
 public class SceneRouter {
 

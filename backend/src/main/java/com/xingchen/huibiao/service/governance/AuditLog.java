@@ -24,20 +24,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 审计日志：只追加、不改写，落 SQLite 的 audit_logs 表。
- *
- * 固定字段（时间、动作、对象、详情、操作人）单独成列，附加信息统一放 extra；
- * 分页用 LIMIT + OFFSET，只读当前页；本地只留最近 100 条，超出的按主键删最旧的。
- *
- * 没有账号体系时，“谁操作的”取网关/前端透传的 X-Operator，缺省记来源 IP；
- * 这样以后接统一身份，只需要让网关注入这个头，日志格式不用改。
- */
+// 审计日志：只追加、不改写，落 SQLite 的 audit_logs 表。
 @Service
 public class AuditLog {
 
     private static final Logger log = LoggerFactory.getLogger(AuditLog.class);
-    /** 只保留最近 100 条审计记录，超出后丢最旧的；单页最多取 50 条。 */
+    // 只保留最近 100 条审计记录，超出后丢最旧的；单页最多取 50 条。
     static final int MAX_ENTRIES = 100;
     private static final int MAX_PAGE_SIZE = 50;
 
@@ -51,7 +43,7 @@ public class AuditLog {
         this.mapper = mapper;
     }
 
-    /** 启动时收敛：老版本 jsonl 日志先一次性导入，再把库里超长部分裁到上限。 */
+    // 启动时收敛：老版本 jsonl 日志先一次性导入，再把库里超长部分裁到上限。
     @PostConstruct
     public void init() {
         migrateLegacy();
@@ -59,10 +51,7 @@ public class AuditLog {
                 + "SELECT id FROM audit_logs ORDER BY id DESC LIMIT " + MAX_ENTRIES + ")");
     }
 
-    /**
-     * 老版本把审计日志写成 audit.log.jsonl，一行一条。只在表还空着时导入一次，
-     * 导完把原文件改名留档，之后再启动就只读写数据库。
-     */
+    // 老版本把审计日志写成 audit.log.jsonl，一行一条。只在表还空着时导入一次，
     private void migrateLegacy() {
         Path file = paths.auditLogFile();
         if (!db.isEmpty("audit_logs") || !Files.isRegularFile(file)) {
@@ -118,15 +107,13 @@ public class AuditLog {
         append(entry);
     }
 
-    /** 最近若干条，新的在前；只读需要的条数，不再整份读进内存。 */
+    // 最近若干条，新的在前；只读需要的条数，不再整份读进内存。
     public List<Map<String, Object>> recent(int limit) {
         int size = Math.min(Math.max(limit, 1), MAX_ENTRIES);
         return db.list("SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?", this::toMap, size);
     }
 
-    /**
-     * 审计日志分页：新的在前，返回 items / total / page / pages。
-     */
+    // 审计日志分页：新的在前，返回 items / total / page / pages。
     public Map<String, Object> page(int page, int pageSize) {
         int size = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         int total = (int) db.count("SELECT COUNT(*) FROM audit_logs");
@@ -146,9 +133,7 @@ public class AuditLog {
         return out;
     }
 
-    /**
-     * 运行观测里的「清理日志」：清空审计日志表，返回清掉的条数。
-     */
+    // 运行观测里的「清理日志」：清空审计日志表，返回清掉的条数。
     public synchronized int clear() {
         return db.tx(connection -> {
             int count;
@@ -199,7 +184,7 @@ public class AuditLog {
         }
     }
 
-    /** 行 → 前端看到的结构：固定字段在前，附加字段展开在后面，和旧版本 jsonl 的格式一致。 */
+    // 行 → 前端看到的结构：固定字段在前，附加字段展开在后面，和旧版本 jsonl 的格式一致。
     private Map<String, Object> toMap(ResultSet rs) throws SQLException {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("at", rs.getString("at"));

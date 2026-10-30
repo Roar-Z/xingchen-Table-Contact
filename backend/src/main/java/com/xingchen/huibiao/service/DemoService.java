@@ -26,19 +26,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/**
- * 示例数据来自比赛提供的四张表。示例走的是和用户上传完全一样的登记、解析、执行流程，
- * 不是前端写死的假数据，所以现场点“示例”能真出一份 HR 导入表。
- */
+// 示例数据来自比赛提供的四张表。示例走的是和用户上传完全一样的登记、解析、执行流程，
 @Service
 public class DemoService {
 
     private static final Logger log = LoggerFactory.getLogger(DemoService.class);
 
-    /**
-     * sources 是源表，template 是比赛样例里自带的 HR 导入模板。
-     * 样例和手工上传走同一套逻辑：导出列一律由模板决定。
-     */
+    // sources 是源表，template 是比赛样例里自带的 HR 导入模板。
     public record Prepared(String name, String brief, List<FileMeta> sources, FileMeta template) {
         public List<FileRef> refs() {
             List<FileRef> refs = new ArrayList<>();
@@ -56,7 +50,7 @@ public class DemoService {
     private final TaskStore store;
     private final SqliteDb db;
 
-    /** kv 里的标记：示例只初始化一次，用户把任务全删了也不会在下次启动又冒出来 */
+    // kv 里的标记：示例只初始化一次，用户把任务全删了也不会在下次启动又冒出来
     private static final String SEED_FLAG = "demo_seeded";
 
     public DemoService(AppProperties properties, DataPaths paths, FileService files, TaskService tasks,
@@ -102,13 +96,7 @@ public class DemoService {
         return out;
     }
 
-    /**
-     * 第一次启动、还没有任务时，跑两份示例，省得评委打开页面看到一片空白。
-     * 只有真的读到了样例文件才会创建，不会写死假任务。
-     *
-     * 注意：判断的是数据库里的 demo_seeded 标记，而不是任务数是否为 0 ——
-     * 用户把记录全删了，重启后看到示例任务又冒出来，那不是“没删掉”，是这里又补了一份。
-     */
+    // 第一次启动、还没有任务时，跑两份示例，省得评委打开页面看到一片空白。
     @EventListener(ApplicationReadyEvent.class)
     public void seedIfEmpty() {
         if (!properties.isSeedDemo() || store.count() > 0 || db.flag(SEED_FLAG)) {

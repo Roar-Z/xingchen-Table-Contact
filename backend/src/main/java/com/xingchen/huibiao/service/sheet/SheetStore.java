@@ -22,35 +22,28 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
-/**
- * 表格仓库：索引与操作日志存 SQLite（data/huibiao.db），表格本体仍是 data/sheets/{id}.xlsx。
- *
- * 分工说明：
- * - sheets 表的字段全部平铺，按名称/来源/修改时间搜索排序都是真正的 SQL；
- * - sheet_logs 单独一张表，按时间倒序分页、按条删除、只留最近 100 条都由 SQL 完成；
- * - 表被删掉时日志不跟着消失，而是把 deleted 置 1 留痕，仍然出现在操作日志里。
- *
- * 内存里缓存一份索引，读接口不必每次查库；所有写入在一个事务里完成。
- */
+// 表格仓库：索引与操作日志存 SQLite（data/huibiao.db），表格本体仍是 data/sheets/{id}.xlsx。
 @Service
 public class SheetStore {
 
     private static final Logger log = LoggerFactory.getLogger(SheetStore.class);
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
-    /** 仓库所有表格的日志一共只留最近 100 条，跑得越多也不会把索引撑大 */
+    // 仓库所有表格的日志一共只留最近 100 条，跑得越多也不会把索引撑大
     public static final int MAX_LOGS = 100;
 
     private final DataPaths paths;
     private final SqliteDb db;
     private final Map<String, SheetRecord> items = new LinkedHashMap<>();
-    /** 已删除表格留下的日志：表没了，但「删除表格」这条要留在操作日志里 */
+    // 已删除表格留下的日志：表没了，但「删除表格」这条要留在操作日志里
     private final List<ArchivedLog> archived = new ArrayList<>();
 
-    /** 表被删掉之后仍然要出现在操作日志里的一条记录 */
+    // 表被删掉之后仍然要出现在操作日志里的一条记录
     public static class ArchivedLog {
         public String id;
         public String sheetId;
@@ -97,7 +90,7 @@ public class SheetStore {
         log.info("表格仓库已加载 {} 张表、{} 条日志", items.size(), archived.size());
     }
 
-    /** 老版本的 sheets.json / sheet-logs.json 只在库里空着时导入一次，导完改名留档。 */
+    // 老版本的 sheets.json / sheet-logs.json 只在库里空着时导入一次，导完改名留档。
     private void migrateLegacy() {
         Path sheetsFile = paths.sheetsFile();
         if (db.isEmpty("sheets") && Files.isRegularFile(sheetsFile)) {
@@ -169,7 +162,7 @@ public class SheetStore {
         return record;
     }
 
-    /** 从库里把日志读回内存：存活表格的日志挂到对应表上，已删除表的日志进归档列表。 */
+    // 从库里把日志读回内存：存活表格的日志挂到对应表上，已删除表的日志进归档列表。
     private void reloadLogs() {
         Map<String, List<SheetRecord.LogEntry>> live = new HashMap<>();
         List<ArchivedLog> deleted = new ArrayList<>();
@@ -197,15 +190,12 @@ public class SheetStore {
         archived.addAll(deleted);
     }
 
-    /** 已删除表格的日志（只读副本），和存活表格的日志合并后才对外的操作日志 */
+    // 已删除表格的日志（只读副本），和存活表格的日志合并后才对外的操作日志
     public synchronized List<ArchivedLog> archived() {
         return new ArrayList<>(archived);
     }
 
-    /**
-     * 表被删掉时调用：这张表原有的操作记录整体转存（deleted 置 1），再补一条「删除表格」。
-     * 表没了，但日志里的历史不能跟着消失。
-     */
+    // 表被删掉时调用：这张表原有的操作记录整体转存（deleted 置 1），再补一条「删除表格」。
     public synchronized void archiveSheet(String sheetId, String sheetName, List<SheetRecord.LogEntry> history,
                                           String time, String action, String detail, String level) {
         db.tx(connection -> {
@@ -221,7 +211,7 @@ public class SheetStore {
         reloadLogs();
     }
 
-    /** 删日志时同步清理已删除表格留下的那几条 */
+    // 删日志时同步清理已删除表格留下的那几条
     public synchronized void removeArchived(Set<String> ids, boolean clearAll) {
         db.tx(connection -> {
             if (clearAll) {
@@ -294,20 +284,7 @@ public class SheetStore {
         reloadLogs();
     }
 
-    /**
-     * 日志全局只保留最近 MAX_LOGS 条：按时间倒序取前 100，其余从各表的尾部裁掉。
-     * 已删除表格留下的归档日志也一起参与，不然删表越多、日志越多。
-     */
-    public synchronized int trimLogs() {
-        int[] removed = {0};
-        db.tx(connection -> {
-            removed[0] = trimInTx(connection);
-            return null;
-        });
-        reloadLogs();
-        return removed[0];
-    }
-
+    // 日志全局只保留最近 MAX_LOGS 条：按时间倒序取前 100，其余从各表的尾部裁掉。
     private int trimInTx(Connection connection) throws SQLException {
         int before = countLogs(connection);
         try (PreparedStatement ps = connection.prepareStatement(
@@ -346,6 +323,45 @@ public class SheetStore {
             Files.deleteIfExists(paths.sheetBackupPath(id));
         } catch (Exception e) {
             log.warn("删除表格文件失败：{}", e.getMessage());
+        }
+    }
+
+    // 「删除所有表格数据」：整库清空——表记录、全部表格日志（含删表留痕）、
+    public synchronized int clearAll() {
+        int count = items.size();
+        items.clear();
+        archived.clear();
+        db.tx(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM sheets")) {
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM sheet_logs")) {
+                ps.executeUpdate();
+            }
+            return null;
+        });
+        deleteSheetFiles(paths.sheets());
+        deleteSheetFiles(paths.sheetBackup());
+        return count;
+    }
+
+    // 只清目录里的 xlsx，目录本身保留；表格文件只放一层，不递归子目录。
+    private void deleteSheetFiles(Path dir) {
+        if (dir == null || !Files.isDirectory(dir)) {
+            return;
+        }
+        try (Stream<Path> files = Files.list(dir)) {
+            for (Path target : files
+                    .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".xlsx"))
+                    .toList()) {
+                try {
+                    Files.deleteIfExists(target);
+                } catch (Exception e) {
+                    log.warn("删除表格文件失败：{}", e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("清空表格目录失败：{}", e.getMessage());
         }
     }
 

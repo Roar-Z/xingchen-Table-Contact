@@ -76,10 +76,7 @@ public class TaskController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "没有找到这个任务"));
     }
 
-    /**
-     * 结果表分页 + 模糊查询。直接读任务的导出文件，和下载到的 Excel 是同一份数据。
-     * q 支持空格分隔多个关键字（同时命中才算）；column 传列名可只搜这一列，不传就是全列搜。
-     */
+    // 结果表分页 + 模糊查询。直接读任务的导出文件，和下载到的 Excel 是同一份数据。
     @GetMapping("/{id}/rows")
     public Map<String, Object> rows(@PathVariable("id") String id,
                                     @RequestParam(value = "page", defaultValue = "1") int page,
@@ -103,9 +100,7 @@ public class TaskController {
         return task;
     }
 
-    /**
-     * 用一句话改结果表，例如「第 3 行开始时间改成 09:00」「姓名为张三的行删掉」。
-     */
+    // 用一句话改结果表，例如「第 3 行开始时间改成 09:00」「姓名为张三的行删掉」。
     @PostMapping("/{id}/revise")
     public Map<String, Object> revise(@PathVariable("id") String id,
                                       @RequestBody ReviseRequest request) {
@@ -117,9 +112,7 @@ public class TaskController {
         return result;
     }
 
-    /**
-     * 撤销最近一条自然语言修改，按撤销后的结果重新导出。
-     */
+    // 撤销最近一条自然语言修改，按撤销后的结果重新导出。
     @PostMapping("/{id}/undo-edit")
     public TaskRecord undoEdit(@PathVariable("id") String id) {
         TaskRecord task = tasks.undoRevision(id);

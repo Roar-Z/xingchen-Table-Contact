@@ -22,14 +22,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
-/**
- * 表格智作的读写底座：内存里是一张二维表，落到磁盘就是 xlsx。
- * 列名和单元格一律按文本处理，避免工号、日期被 Excel 自作主张改写。
- */
+// 表格智作的读写底座：内存里是一张二维表，落到磁盘就是 xlsx。
 public final class SheetFile {
 
     private static final Pattern PLAIN_NUMBER = Pattern.compile("[-+]?\\d{1,15}(\\.\\d+)?");
-    /** 系统补出来的列名“列3”“列12”，老版本把标题当表头时会出现一排这种名字。 */
+    // 系统补出来的列名“列3”“列12”，老版本把标题当表头时会出现一排这种名字。
     private static final Pattern PLACEHOLDER = Pattern.compile("列\\d+");
     private static final DataFormatter FORMATTER = new DataFormatter(Locale.US);
 
@@ -175,9 +172,7 @@ public final class SheetFile {
         return new Table(columns, rows);
     }
 
-    /**
-     * 多级表头拼成一列名：上层是分组（早餐），下层是具体字段（费用），中间空格隔开。
-     */
+    // 多级表头拼成一列名：上层是分组（早餐），下层是具体字段（费用），中间空格隔开。
     private static String headerName(List<List<String>> raw, int start, int end, int column) {
         StringBuilder name = new StringBuilder();
         String previous = "";
@@ -196,7 +191,7 @@ public final class SheetFile {
         return name.toString();
     }
 
-    /** 表头行都是短标签，出现数字或长句子就当成数据行。 */
+    // 表头行都是短标签，出现数字或长句子就当成数据行。
     private static boolean looksLikeHeader(List<String> row) {
         for (String value : row) {
             if (value == null || value.isBlank()) {
@@ -304,9 +299,7 @@ public final class SheetFile {
         return numeric;
     }
 
-    /**
-     * 用文件名当表名，去掉扩展名和路径里不能出现的字符。
-     */
+    // 用文件名当表名，去掉扩展名和路径里不能出现的字符。
     public static String titleOf(String fileName) {
         if (fileName == null || fileName.isBlank()) {
             return "未命名表格";

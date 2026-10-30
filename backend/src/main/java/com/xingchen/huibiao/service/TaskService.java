@@ -31,9 +31,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * 任务相关的业务入口。试算和正式执行走同一套服务，避免“预览能过、执行报错”的尴尬。
- */
+// 任务相关的业务入口。试算和正式执行走同一套服务，避免“预览能过、执行报错”的尴尬。
 @Service
 public class TaskService {
 
@@ -219,10 +217,7 @@ public class TaskService {
         return store.find(id);
     }
 
-    /**
-     * HR 人工看过异常日志后确认结果可用，把待复核改成已完成。
-     * 只允许 warning 走这一步，避免误把手里的失败任务标成完成。
-     */
+    // HR 人工看过异常日志后确认结果可用，把待复核改成已完成。
     public TaskRecord confirmReview(String id) {
         TaskRecord task = store.find(id)
                 .orElseThrow(() -> new IllegalArgumentException("没有找到任务 " + id));
@@ -237,10 +232,7 @@ public class TaskService {
         return task;
     }
 
-    /**
-     * 用当前任务保存的源文件和配置重新跑一遍，成功与否由自动判定写回状态。
-     * 适合“还是同一批表，只是刚才结果不对”的场景，不用重新上传、重新配置。
-     */
+    // 用当前任务保存的源文件和配置重新跑一遍，成功与否由自动判定写回状态。
     public TaskRecord rerun(String id) {
         TaskRecord task = store.find(id)
                 .orElseThrow(() -> new IllegalArgumentException("没有找到任务 " + id));
@@ -250,12 +242,7 @@ public class TaskService {
         return task;
     }
 
-    /**
-     * 用一句话改结果表。
-     *
-     * 先把话翻译成结构化操作存进 config.edits，再按原源文件重算、重放修改、重新导出，
-     * 这样下载到的 Excel 和页面预览用的是同一份数据，不会出现“只是看着改了”。
-     */
+    // 用一句话改结果表。
     public Map<String, Object> revise(String id, String instruction) {
         TaskRecord task = store.find(id)
                 .orElseThrow(() -> new IllegalArgumentException("没有找到任务 " + id));
@@ -282,9 +269,7 @@ public class TaskService {
         return out;
     }
 
-    /**
-     * 撤销最近一条自然语言修改。修改记录顺序敏感（比如先排序再改第 3 行），所以只能倒着撤。
-     */
+    // 撤销最近一条自然语言修改。修改记录顺序敏感（比如先排序再改第 3 行），所以只能倒着撤。
     public TaskRecord undoRevision(String id) {
         TaskRecord task = store.find(id)
                 .orElseThrow(() -> new IllegalArgumentException("没有找到任务 " + id));
@@ -335,9 +320,7 @@ public class TaskService {
         }
     }
 
-    /**
-     * 删除任务记录和它的产出目录，源文件保留给其它任务复用。
-     */
+    // 删除任务记录和它的产出目录，源文件保留给其它任务复用。
     public int delete(List<String> ids) {
         if (ids == null || ids.isEmpty()) {
             throw new IllegalArgumentException("先选中要删除的任务");
@@ -358,6 +341,18 @@ public class TaskService {
         targets.forEach(t -> deleteOutputs(t.id));
         log.info("删除任务 {} 个", removed);
         return removed;
+    }
+
+    // 「删除所有表格数据」时一起清任务记录：任务和它产出的表格是一套东西，
+    public int clearAll() {
+        List<String> ids = store.all().stream()
+                .map(task -> task.id)
+                .filter(id -> id != null && !id.isBlank())
+                .toList();
+        if (ids.isEmpty()) {
+            return 0;
+        }
+        return delete(ids);
     }
 
     private void deleteOutputs(String taskId) {
@@ -415,9 +410,7 @@ public class TaskService {
         return mapping;
     }
 
-    /**
-     * 老记录没存 template_file_id 时，按目标模板名去文件索引里找回上传的模板。
-     */
+    // 老记录没存 template_file_id 时，按目标模板名去文件索引里找回上传的模板。
     private String templateFileIdOf(TaskRecord task) {
         String stored = text(task.config.get("template_file_id"));
         if (stored != null) {
@@ -446,9 +439,7 @@ public class TaskService {
         return text.isEmpty() ? null : text;
     }
 
-    /**
-     * 下载时只认任务记录里登记过的文件名，避免路径穿越。
-     */
+    // 下载时只认任务记录里登记过的文件名，避免路径穿越。
     public Path artifactPath(String taskId, String artifactName) {
         TaskRecord task = store.find(taskId)
                 .orElseThrow(() -> new IllegalArgumentException("没有找到任务 " + taskId));
@@ -467,10 +458,7 @@ public class TaskService {
         return path;
     }
 
-    /**
-     * 产出路径对外写成 data/outputs/...（从 backend 目录算起），
-     * 老记录可能只有 outputs/...，两种都要能解析。
-     */
+    // 产出路径对外写成 data/outputs/...（从 backend 目录算起），
     private Path resolveArtifact(String relative) {
         String clean = relative == null ? "" : relative.replace('\\', '/');
         Path parent = paths.root().getParent();

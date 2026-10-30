@@ -28,20 +28,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 配置阶段的智能体编排。
- *
- * 有可用模型时走真正的工具调用循环：由模型自己决定先看哪张表、要不要查记忆、
- * 校验不过时是否重试或交人，每一步都是对真实 Java 工具的一次调用，结果再喂回模型。
- * 没有模型或模型调用失败时，退回同一套工具的固定顺序编排，保证离线也能跑。
- *
- * 数值口径仍然由确定性代码计算，模型只做顺序决策和语义判断。
- */
+// 配置阶段的智能体编排。
 @Service
 public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
-    /** 模型最多连续调用多少次工具，防止在缺列问题上无限重试。 */
+    // 模型最多连续调用多少次工具，防止在缺列问题上无限重试。
     private static final int MAX_TOOL_TURNS = 14;
 
     private final FileService files;
@@ -97,12 +89,9 @@ public class AgentService {
         }
     }
 
-    /* ==================== 模型可调用的工具集 ==================== */
+    // ==================== 模型可调用的工具集 ====================
 
-    /**
-     * 一次规划会话：持有本次的文件、意图、经验、缺失列等状态，
-     * 对外暴露的每个 @Tool 方法都是一次真实操作，模型可以按任意顺序调用。
-     */
+    // 一次规划会话：持有本次的文件、意图、经验、缺失列等状态，
     public final class Session {
 
         private final AnalyzeRequest request;
@@ -121,14 +110,14 @@ public class AgentService {
         private String detectSummary = "";
         private String recallSummary = "";
         private String handoffSummary = "";
-        /** 预置给模型的“已经算好的事实”，避免它再花几轮把同样的工具重跑一遍 */
+        // 预置给模型的“已经算好的事实”，避免它再花几轮把同样的工具重跑一遍
         private String preparedNote = "";
 
         Session(AnalyzeRequest request) {
             this.request = request;
         }
 
-        /* ---------- 工具 1：读结构 ---------- */
+        // ---------- 工具 1：读结构 ----------
 
         @Tool(name = "inspect_sources",
                 value = "读取源表结构。返回每张表的文件名、表头所在行、数据行数、列名和少量样例值。"
@@ -151,7 +140,7 @@ public class AgentService {
             return inspectSummary;
         }
 
-        /* ---------- 工具 2：识别场景 ---------- */
+        // ---------- 工具 2：识别场景 ----------
 
         @Tool(name = "detect_intent",
                 value = "识别业务场景（假期余量结算 / 加班记录桥接）、业务口径、目标模板和筛选条件。"
@@ -189,7 +178,7 @@ public class AgentService {
             return detectSummary;
         }
 
-        /* ---------- 工具 3：查记忆 ---------- */
+        // ---------- 工具 3：查记忆 ----------
 
         @Tool(name = "recall_experience",
                 value = "检索历史经验：过去同类表用过的模板和映射。命中后可以调用 apply_experience 补缺，"
@@ -223,7 +212,7 @@ public class AgentService {
             return recallSummary;
         }
 
-        /* ---------- 工具 4：复用经验 ---------- */
+        // ---------- 工具 4：复用经验 ----------
 
         @Tool(name = "apply_experience",
                 value = "把命中的历史映射里当前还缺的目标列补上，只补空缺，不覆盖已有映射。")
@@ -248,7 +237,7 @@ public class AgentService {
             return apply.detail;
         }
 
-        /* ---------- 工具 5：校验 ---------- */
+        // ---------- 工具 5：校验 ----------
 
         @Tool(name = "validate_mapping",
                 value = "校验目标模板的必填列是否都有可用来源。返回缺失列；每次校验都会留下一条反思记录，"
@@ -271,7 +260,7 @@ public class AgentService {
                     : "校验未通过，缺失必填列：" + String.join("、", missing) + "。可以调用 auto_fix 尝试自动补全。";
         }
 
-        /* ---------- 工具 6：自动补全 ---------- */
+        // ---------- 工具 6：自动补全 ----------
 
         @Tool(name = "auto_fix",
                 value = "对缺失的必填列尝试自动补全：日期类用“日期 + 时间”拼接，时长类用“天 × 8”换算。"
@@ -309,7 +298,7 @@ public class AgentService {
                     : "没有可以自动补全的列，这些缺口需要人工指定。";
         }
 
-        /* ---------- 工具 7：交人 ---------- */
+        // ---------- 工具 7：交人 ----------
 
         @Tool(name = "handoff_human",
                 value = "生成待人工确认的方案：汇总映射数量、自动生成数量和仍需人工处理的列。"
@@ -342,13 +331,11 @@ public class AgentService {
             return handoffSummary;
         }
 
-        /* ==================== 两条运行方式 ==================== */
+        // ==================== 两条运行方式 ====================
 
-        /** 真智能体：由模型复核预置结果、决定是否补救，并生成待人工确认的方案。 */
+        // 真智能体：由模型复核预置结果、决定是否补救，并生成待人工确认的方案。
         AgentPlan runWithModel(ChatModel model) {
             // 读表 / 识别场景 / 查记忆 / 校验 / 自动补全都是确定性操作，先在本地按依赖顺序跑完，
-            // 模型只负责“复核 + 交人 + 总结”。这样一次规划只需 2~3 次模型往返，等待时间大约减半，
-            // 生成的内容和原来完全一致（同一套工具、同一份数据，只是执行者从模型变成了 Java）。
             if (!inspected) {
                 inspectSources();
             }
@@ -377,7 +364,7 @@ public class AgentService {
             return finish();
         }
 
-        /** 离线兜底：同一套工具，顺序写死，保证没有模型也能出方案。 */
+        // 离线兜底：同一套工具，顺序写死，保证没有模型也能出方案。
         AgentPlan runInOrder() {
             inspectSources();
             detectIntent();
@@ -411,7 +398,7 @@ public class AgentService {
             }
         }
 
-        /** 给模型的任务上下文：描述、文件清单和模板，具体表头由工具返回。 */
+        // 给模型的任务上下文：描述、文件清单和模板，具体表头由工具返回。
         private String describeTask() {
             StringBuilder sb = new StringBuilder();
             sb.append("任务描述：").append(TextUtils.isBlank(request.brief()) ? "（用户没有额外描述）" : request.brief()).append("\n");
@@ -440,7 +427,7 @@ public class AgentService {
             return sb.toString();
         }
 
-        /** 把已经跑完的工具结果压缩成一段事实，让模型一次就能读完判断。 */
+        // 把已经跑完的工具结果压缩成一段事实，让模型一次就能读完判断。
         private String describePrepared() {
             StringBuilder sb = new StringBuilder();
             sb.append("\n已完成的工具结果（事实，直接采信）：\n");
@@ -496,7 +483,7 @@ public class AgentService {
         }
     }
 
-    /** 模型只负责决定调用哪些工具，数值和文件操作都在 Java 里完成。 */
+    // 模型只负责决定调用哪些工具，数值和文件操作都在 Java 里完成。
     public interface Planner {
 
         @SystemMessage("""
@@ -516,7 +503,7 @@ public class AgentService {
         String run(@UserMessage String task);
     }
 
-    /* ==================== 下面是纯 Java 工具实现 ==================== */
+    // ==================== 下面是纯 Java 工具实现 ====================
 
     private int fillFromExperience(IntentResult intent, List<Loaded> loaded, ExperienceStore.Item item) {
         if (item == null || item.mapping.isEmpty() || intent.targetTemplate == null) {
@@ -561,10 +548,7 @@ public class AgentService {
         return filled;
     }
 
-    /**
-     * 自动补缺：日期类目标用“日期 + 时间”拼，时长类目标用“天 × 8”换算。
-     * 只有源表确实有这些列时才动手，否则交给人工。
-     */
+    // 自动补缺：日期类目标用“日期 + 时间”拼，时长类目标用“天 × 8”换算。
     private int autoFixMissing(IntentResult intent, List<Loaded> loaded, List<String> missing, List<String> fixes) {
         if (missing.isEmpty()) {
             return 0;
@@ -724,10 +708,7 @@ public class AgentService {
         return null;
     }
 
-    /**
-     * 日期列。key=start/end 时优先配对应那一侧（起始日期 / 结束日期），
-     * 否则起始和结束会都指到第一列日期上。
-     */
+    // 日期列。key=start/end 时优先配对应那一侧（起始日期 / 结束日期），
     private String findDateColumn(Loaded source, String key) {
         String fallback = null;
         for (String column : source.columns) {
@@ -747,10 +728,7 @@ public class AgentService {
         return findDateColumn(source, null);
     }
 
-    /**
-     * 时间列在 Excel 里是“时分秒”，解析不出完整日期；用它和日期列区分开。
-     * 和日期列一样按 起始/结束 配对，避免“结束日期 + 起始时间”这种错配。
-     */
+    // 时间列在 Excel 里是“时分秒”，解析不出完整日期；用它和日期列区分开。
     private String findTimeColumn(Loaded source, String dateColumn) {
         String want = dateColumn == null ? null : sideOf(dateColumn);
         String fallback = null;

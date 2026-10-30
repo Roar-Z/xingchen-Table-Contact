@@ -8,9 +8,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -18,12 +16,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 表格智作的语义层：把一句话翻译成结构化操作。
- *
- * 模型只做“听懂”这一步，真正的定位和执行都由 SheetService 用确定性代码完成，
- * 所以改错了也能一眼看出是哪条操作、撤销也简单。模型不可用时用中文句式兜底。
- */
+// 表格智作的语义层：把一句话翻译成结构化操作。
 @Service
 public class SheetAgentService {
 
@@ -36,7 +29,6 @@ public class SheetAgentService {
     private static final Pattern MATH = Pattern.compile("(加上|加|减去|减|乘以|乘|除以|除)\\s*(\\d+(?:\\.\\d+)?)");
     private static final Pattern CONDITION = Pattern.compile("(?:满足|其中|所有|把|将)?\\s*([^，,。；;\\s]{1,14}?)\\s*(?:为|是|等于|=)\\s*([^，,。；;\\s]{0,30}?)");
     private static final Pattern SORT = Pattern.compile("(?:按|根据|依照)\\s*([^，,。；;\\s]{1,14}?)\\s*(升序|降序|由小到大|由大到小|从低到高|从高到低|正序|倒序|排序)");
-    private static final Pattern SORT_DIR = Pattern.compile("(升序|降序|由小到大|由大到小|从低到高|从高到低|正序|倒序)");
     private static final Pattern ADD_COLUMN = Pattern.compile("(?:新增|增加|添加|加)\\s*(?:一列|1列|列)?\\s*[「“\"']?([^「」“”\"'，,。；;\\s]{1,14})");
     private static final Pattern DROP_COLUMN = Pattern.compile("(?:删除|删掉|去掉|移除)\\s*(?:该列|这一列|一列|列)?\\s*[「“\"']?([^「」“”\"'，,。；;\\s]{1,14})");
     private static final Pattern COLUMN_LIST = Pattern.compile("(?:列|字段|表头|包含|包括|要有|需要有|分别是)\\s*[：:是]?\\s*([^。；;]{2,120})");
@@ -49,7 +41,7 @@ public class SheetAgentService {
         this.mapper = mapper;
     }
 
-    /* ==================== 改表 ==================== */
+    // ==================== 改表 ====================
 
     public Map<String, Object> parseEdit(String instruction, List<String> columns, List<Map<String, Object>> sample) {
         ChatModel model = models.getIfAvailable();
@@ -279,7 +271,7 @@ public class SheetAgentService {
         return java.util.Optional.of(op);
     }
 
-    /* ==================== 建表 / 融合 ==================== */
+    // ==================== 建表 / 融合 ====================
 
     public Map<String, Object> compose(String instruction, List<Map<String, Object>> sheets) {
         ChatModel model = models.getIfAvailable();
@@ -413,7 +405,7 @@ public class SheetAgentService {
         return fallback;
     }
 
-    /* ==================== 通用 ==================== */
+    // ==================== 通用 ====================
 
     private void normalize(List<Map<String, Object>> ops, List<String> columns) {
         List<Map<String, Object>> kept = new ArrayList<>();

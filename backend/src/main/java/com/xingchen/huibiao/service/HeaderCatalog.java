@@ -8,10 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 表头词典。系统自带的叫法放在这里，用户补充的别名存在数据库的 kv 表里，读出来再合并。
- * 匹配顺序是：完全一致 > 包含 > 去符号后包含，分数只用来挑表头行和给映射建议。
- */
+// 表头词典。系统自带的叫法放在这里，用户补充的别名存在数据库的 kv 表里，读出来再合并。
 @Component
 public class HeaderCatalog {
 
@@ -62,13 +59,7 @@ public class HeaderCatalog {
         return fields;
     }
 
-    public FieldDef byField(String field) {
-        return fields.stream().filter(f -> f.field().equals(field)).findFirst().orElse(null);
-    }
-
-    /**
-     * 把系统别名和用户补充的别名合成一张表。
-     */
+    // 把系统别名和用户补充的别名合成一张表。
     public Map<String, List<String>> mergedAliases(Map<String, List<String>> extras) {
         Map<String, List<String>> map = new LinkedHashMap<>();
         for (FieldDef def : fields) {
@@ -115,9 +106,7 @@ public class HeaderCatalog {
         return best;
     }
 
-    /**
-     * 给一行候选表头打分。低于 2 个字段的行不作为表头，避免把标题行当成表头。
-     */
+    // 给一行候选表头打分。低于 2 个字段的行不作为表头，避免把标题行当成表头。
     public int scoreRow(List<String> row, Map<String, List<String>> aliases) {
         int score = 0;
         int hits = 0;

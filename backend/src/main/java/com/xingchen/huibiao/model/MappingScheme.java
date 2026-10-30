@@ -3,10 +3,7 @@ package com.xingchen.huibiao.model;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 可复用的字段映射方案。存的是“目标列 → 源文件名 / 源列名”，
- * 不存内部 fileId，换机器或重新上传同名文件也能直接套用。
- */
+// 可复用的字段映射方案。存的是“目标列 → 源文件名 / 源列名”，
 public class MappingScheme {
 
     public String id;
@@ -20,7 +17,7 @@ public class MappingScheme {
         public String target;
         public String fileName;
         public String column;
-        /** 拼接表达式，方案里也一并保存，换人加载后能直接复用。 */
+        // 拼接表达式，方案里也一并保存，换人加载后能直接复用。
         public String expr;
 
         public Entry() {

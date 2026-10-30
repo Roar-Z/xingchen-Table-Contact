@@ -6,10 +6,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
 
-/**
- * 任务执行线程池。现场一般就一两个人用，2 个常驻线程够跑示例，
- * 留一点队列是为了连续点几次“开始执行”时不至于把请求丢掉。
- */
+// 任务执行线程池。现场一般就一两个人用，2 个常驻线程够跑示例，
 @Configuration
 public class AsyncConfig {
 

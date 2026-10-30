@@ -1,14 +1,5 @@
-﻿﻿<script setup>
-/**
- * 新建任务页 —— 智能体工作台（3 个阶段）
- *
- * 1 交接任务：源表 + 目标模板 + 一句话目标一次交给智能体
- * 2 核对方案：智能体轨迹、决策摘要、字段映射（人工闸门）
- * 3 交付结果：执行进度、结果预览、下载
- *
- * 说明：后端点位都集中在 api.js，本文件只负责页面状态和交互，
- * 后续替换成别的智能体服务时改 api.js 即可，页面不用重写。
- */
+﻿<script setup>
+// 新建任务页 —— 智能体工作台（3 个阶段）
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -29,7 +20,9 @@ import 'element-plus/dist/index.css'
 import Icon from '../components/Icon.vue'
 import ResultTable from '../components/ResultTable.vue'
 import BridgeAgent from '../components/BridgeAgent.vue'
-import { api } from '../api'
+import KnowledgeDialog from '../components/KnowledgeDialog.vue'
+import { api, apiState } from '../api'
+import { OFFLINE_HINT, downloadCsv, guessMapping, mappedRows, readTable } from '../offline'
 import {
   railDetail,
   railMemory,
@@ -50,18 +43,36 @@ defineOptions({ name: 'AgentWorkbench' })
 const router = useRouter()
 const { show } = useToast()
 
+// 顶栏右侧的「知识库」入口：制度、口径文档挂进本地库后，规划和回答都会按相关度引用。
+const knowledgeOpen = ref(false)
+const TOPBAR_ACTIONS = [
+  {
+    key: 'knowledge',
+    label: '知识库',
+    icon: 'book',
+    hint: '上传制度、计算口径、字段对照表，让模型按你的规则算，并注明出自哪份文件'
+  }
+]
+
+function onTopbarAction(key) {
+  if (key !== 'knowledge') return
+  // 知识库要靠后端取字、切片、检索，离线时点了只会看到一个空弹窗，先说清为什么用不了
+  if (apiState.online === false) {
+    show('当前离线模式，知识库暂时用不了；连上服务器后再点「知识库」上传文件', 'err')
+    return
+  }
+  knowledgeOpen.value = true
+}
+
 // 页面标题和说明统一放到顶栏，页面正文不再重复一遍
 const TOPBAR = {
   title: '智能体工作台',
-  desc: '提交源表、目标模板和一句话目标，系统读取表结构、检索历史配置并生成字段映射方案，用户核对后执行。'
+  desc: '提交源表、目标模板和一句话目标，系统读取表结构、检索历史配置并生成字段映射方案，用户核对后执行。',
+  actions: TOPBAR_ACTIONS,
+  onAction: onTopbarAction
 }
 
-/*
- * 两种工作模式：
- * standard —— 源表 + 目标模板，逐列核对，适合明确的转换任务；
- * agent    —— 上传整个数据集（zip / 文件夹），一句话业务目标，智能体自己找表、对齐、计算、导出。
- * 默认进入智能体模式；模式记在 sessionStorage 里，刷新页面还停在原来那一页。
- */
+// 两种工作模式：
 const MODE_KEY = 'huibiao.mode.v2'
 const workspaceMode = ref('agent')
 try {
@@ -73,14 +84,16 @@ try {
 
 const TOPBAR_AGENT = {
   title: '智能体工作台 · 跨系统桥接',
-  desc: '提交压缩包或整个文件夹并说明业务目标，智能体自动定位数据表、对齐字段、执行跨表计算，输出标准表与异常清单。'
+  desc: '提交压缩包或整个文件夹并说明业务目标，智能体自动定位数据表、对齐字段、执行跨表计算，输出标准表与异常清单。',
+  actions: TOPBAR_ACTIONS,
+  onAction: onTopbarAction
 }
 
 // 模式切换放在顶栏右侧，页面顶部不再占一整条
 const MODE_SEGMENTS = [
   {
     key: 'standard',
-    label: '标准模式',
+    label: '普通模式',
     hint: '源表 + 目标模板，逐列核对，适合明确的转换任务'
   },
   {
@@ -93,10 +106,25 @@ const MODE_SEGMENTS = [
 
 // 顶栏被 keep-alive 收回后要重新挂上模式切换，挂载、激活各调一次
 function mountTopbar() {
-  useTopbar(workspaceMode.value === 'agent' ? TOPBAR_AGENT : TOPBAR)
+  const offline = apiState.online === false
+  // 离线时按钮仍然保留，点它给一句明确提示，比直接藏起来更好懂
+  const base = workspaceMode.value === 'agent' ? TOPBAR_AGENT : TOPBAR
+  const config = offline
+    ? {
+        ...base,
+        desc: '当前离线模式：表格在本地解析、字段按内置词典对齐，可直接下载 CSV；AI 规划与大模型问答需联网后使用。',
+        actions: (base.actions || []).map((item) => (item.key === 'knowledge'
+          ? { ...item, hint: '离线模式下知识库不可用，连上服务器后再上传' }
+          : item))
+      }
+    : base
+  useTopbar(config)
   useTopbarSegments(MODE_SEGMENTS, switchMode)
   setTopbarSegment(workspaceMode.value)
 }
+
+// 断网 / 恢复都要换顶栏说明，否则用户看到的还是「交给智能体」那套文案
+watch(() => apiState.online, () => mountTopbar())
 
 function switchMode(mode) {
   if (workspaceMode.value === mode) return
@@ -108,7 +136,7 @@ function switchMode(mode) {
   }
   mountTopbar()
   // 两种模式都显示左侧状态条，只是内容不同：桥接模式交代的是原子能力，
-  // 标准模式交代的是读表、校验映射这些转换动作
+  // 普通模式交代的是读表、校验映射这些转换动作
   railVisible.value = true
   railScope.value = mode === 'agent' ? 'bridge' : 'standard'
   if (mode === 'agent') {
@@ -126,7 +154,7 @@ function switchMode(mode) {
 // 首次渲染就要把标题和模式切换挂上去，不能等 onMounted
 mountTopbar()
 
-/* ============ 区块 1：文件 ============ */
+// ============ 区块 1：文件 ============
 const sourceFiles = ref([]) // 源数据表，允许多个
 const templateFile = ref(null) // 目标模板，只认一个；导出列完全按它生成
 const sourceUploadCount = ref(0)
@@ -135,7 +163,62 @@ const templateUploadCount = ref(0)
 const sourceUploading = computed(() => sourceUploadCount.value > 0)
 const templateUploading = computed(() => templateUploadCount.value > 0)
 
-/* ============ 区块 2：映射 ============ */
+// ============ 离线模式 ============
+const offlineMode = computed(() => apiState.online === false)
+const OFFLINE_KEY = 'huibiao.offline.task.v1'
+const offlineTables = ref({}) // file_id → { name, columns, rows }
+
+function sampleOfTable(table) {
+  const sample = {}
+  ;(table.columns || []).forEach((column, i) => {
+    sample[column] = table.rows && table.rows[0] ? table.rows[0][i] : ''
+  })
+  return sample
+}
+
+function saveOffline() {
+  try {
+    const tables = {}
+    Object.keys(offlineTables.value).forEach((id) => {
+      const table = offlineTables.value[id]
+      tables[id] = { name: table.name, columns: table.columns, rows: table.rows.slice(0, 1500) }
+    })
+    localStorage.setItem(OFFLINE_KEY, JSON.stringify({
+      sources: sourceFiles.value,
+      template: templateFile.value,
+      tables
+    }))
+  } catch (e) {
+    // 存储写满或禁用时只影响「刷新后还在不在」，当前这一屏照常可用
+  }
+}
+
+function restoreOffline() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(OFFLINE_KEY) || 'null')
+    if (!saved) return
+    sourceFiles.value = Array.isArray(saved.sources) ? saved.sources : []
+    templateFile.value = saved.template || null
+    offlineTables.value = saved.tables || {}
+  } catch (e) {
+    // 坏数据当作没有，不挡用户重新上传
+  }
+}
+
+function clearOffline() {
+  offlineTables.value = {}
+  try {
+    localStorage.removeItem(OFFLINE_KEY)
+  } catch (e) {
+    // 存不了也无所谓，内存里已经清空
+  }
+}
+
+watch(offlineMode, (off) => {
+  if (off) restoreOffline()
+})
+
+// ============ 区块 2：映射 ============
 const analyzing = ref(false)
 const analyzeError = ref('')
 const intent = ref(null)
@@ -146,7 +229,7 @@ const schemeName = ref('')
 const activeScheme = ref('')
 const schemes = ref([])
 
-/* ---------------- 智能体：执行轨迹 + 经验记忆 ---------------- */
+// ---------------- 智能体：执行轨迹 + 经验记忆 ----------------
 const agentSteps = ref([])
 const agentFixes = ref([])
 const agentHandoff = ref([])
@@ -160,12 +243,12 @@ const memoryVisible = ref(false)
 // 业务口径改过之后，旧方案就和输入不一致了，必须由用户再点一次按钮才重新规划
 const planStale = ref(false)
 
-/* ============ 区块 3：规则 ============ */
+// ============ 区块 3：规则 ============
 const brief = ref('')
 const isolate = ref(true) // 脏数据隔离
 const strictFormat = ref(false) // 严格格式校验
 
-/* ============ 区块 4/5：运行与结果 ============ */
+// ============ 区块 4/5：运行与结果 ============
 const running = ref(false)
 const task = ref(null)
 const runError = ref('')
@@ -197,18 +280,11 @@ let analyzeSeq = 0
 // 「试试」里的句子只负责填进输入框，由用户确认后再提交，不直接发给智能体
 const editInputRef = ref(null)
 
-/* ---------------- 规划进度 ----------------
- * 后端是一次性返回结果的，拿不到逐步骤实时进度；这里用“阶段文案 + 渐进进度条 + 已等待秒数”
- * 让等待过程可感知，进度封顶 92%，等真结果回来才结束，不会假装跑满。
- */
+// ---------------- 规划进度 ----------------
 const planElapsed = ref(0)
 let planTimer = null
 
-/*
- * 进度条、阶段文案、左侧工具条共用这一张表：
- * until = 该阶段结束秒数，percent = 该阶段结束时的进度，reveal = 到这个阶段已经亮出的工具条数。
- * 三者同源，避免出现“左边 6 条全亮着、右边还停在检索映射”的对不上。
- */
+// 进度条、阶段文案、左侧工具条共用这一张表：
 const PLAN_STAGES = [
   { until: 1.5, text: '读表：表头、行数与样例值', percent: 28, reveal: 1 },
   { until: 3, text: '对齐目标模板的列和顺序', percent: 52, reveal: 2 },
@@ -257,7 +333,7 @@ function stopPlanProgress() {
   }
 }
 
-/* ============ 分步引导（3 阶段） ============ */
+// ============ 分步引导（3 阶段） ============
 // 原先把「上传 / 映射 / 规则 / 执行 / 下载」拆成 5 步，交流成本太高；
 // 智能体工作台按“交接 → 核对 → 交付”三段走，规则并进交接阶段的对话里。
 const stepList = [
@@ -291,7 +367,8 @@ const gateLimit = computed(() => {
   return 3
 })
 
-const maxStep = computed(() => Math.min(reached.value, gateLimit.value))
+// 离线只有第 1 步能用（本地解析 + 规则映射 + 下载），方案与交付都要模型，不放进流程
+const maxStep = computed(() => (offlineMode.value ? 1 : Math.min(reached.value, gateLimit.value)))
 
 const canLeave = computed(() => gatePassed(step.value))
 
@@ -325,6 +402,14 @@ const nextLabel = computed(() => {
 
 const stepHint = computed(() => {
   if (step.value === 1) {
+    if (offlineMode.value) {
+      if (!sourceFiles.value.length && !templateReady.value) {
+        return '当前离线：先传源表和模板，字段按内置词典本地对齐，能直接下载 CSV'
+      }
+      if (!sourceFiles.value.length) return '当前离线：还缺源数据表'
+      if (!templateReady.value) return '当前离线：还缺目标模板，导出列由它决定'
+      return '当前离线：映射已按规则算好，确认无问题后点「下载匹配结果」'
+    }
     if (!sourceFiles.value.length && !templateReady.value) return '把源表和目标模板交给智能体，它才读得到数据'
     if (!sourceFiles.value.length) return '还缺源数据表'
     if (!templateReady.value) return '还缺目标模板，导出列由它决定'
@@ -344,8 +429,9 @@ const stepHint = computed(() => {
   return ''
 })
 
-/* ---------------- 智能体状态（右侧状态轨） ---------------- */
+// ---------------- 智能体状态（右侧状态轨） ----------------
 const agentStateText = computed(() => {
+  if (offlineMode.value) return '离线模式'
   if (task.value && ['queued', 'running'].includes(task.value.status)) return '执行中'
   if (task.value && ['done', 'warning'].includes(task.value.status)) return '已交付'
   if (running.value) return '执行中'
@@ -357,6 +443,7 @@ const agentStateText = computed(() => {
 })
 
 const agentStateTone = computed(() => {
+  if (agentStateText.value === '离线模式') return 'off'
   if (agentStateText.value === '已交付') return 'ok'
   if (['执行中', '规划中', '读取中'].includes(agentStateText.value)) return 'busy'
   if (agentStateText.value === '等待核对' || agentStateText.value === '方案已确认') return 'wait'
@@ -447,7 +534,7 @@ const planTiles = computed(() => {
   ]
 })
 
-/* 清空这一单：文件、方案、结果和本地现场一起清掉，方便重新交接 */
+// 清空这一单：文件、方案、结果和本地现场一起清掉，方便重新交接
 function resetAll() {
   stopPolling()
   stopPlanProgress()
@@ -465,6 +552,7 @@ function resetAll() {
   resetResult()
   step.value = 1
   reached.value = 1
+  clearOffline()
   try {
     sessionStorage.removeItem(STORE_KEY)
   } catch (e) {
@@ -490,10 +578,55 @@ const quickRules = [
   }
 ]
 
-/* ---------------- 派生状态 ---------------- */
+// ---------------- 派生状态 ----------------
 
 const templateReady = computed(() => !!templateFile.value)
 const templateLabel = computed(() => (templateFile.value ? templateFile.value.name : '未上传'))
+
+// 离线映射：只按内置别名词典对齐，不调模型。挑不出源列的目标列留空，
+const offlineMapping = computed(() => {
+  if (!offlineMode.value || !templateFile.value) return []
+  return guessMapping(
+    sourceFiles.value.map((file) => ({ name: file.name, columns: file.columns || [] })),
+    templateFile.value.columns || []
+  ).map((row) => ({
+    ...row,
+    // 免打卡这类固定值列不需要源列，离线也按同一条口径写死
+    fixed: row.target && FIXED_VALUES[row.target] && !row.column ? FIXED_VALUES[row.target] : ''
+  }))
+})
+
+const offlineMatched = computed(() => offlineMapping.value.filter((row) => row.column || row.fixed).length)
+
+function downloadOfflineResult() {
+  const targets = templateFile.value?.columns || []
+  if (!targets.length) {
+    show('先上传目标模板，导出列由它决定', 'err')
+    return
+  }
+  const sources = sourceFiles.value
+    .map((file) => {
+      const table = offlineTables.value[file.file_id]
+      return table ? { name: file.name, columns: table.columns, rows: table.rows } : null
+    })
+    .filter(Boolean)
+  if (!sources.length) {
+    show('本地还没有解析到源表数据，请重新上传一次源表', 'err')
+    return
+  }
+  const mapping = offlineMapping.value
+  const rows = mappedRows(targets, sources)
+  // 固定值列（如免打卡）在 mappedRows 里拿不到，按目标列位置补上
+  if (rows.length) {
+    mapping.forEach((row, i) => {
+      if (!row.fixed) return
+      rows.forEach((line) => { line[i] = row.fixed })
+    })
+  }
+  const base = (templateFile.value.name || '离线结果').replace(/\.(xlsx|xls|csv)$/i, '')
+  downloadCsv(`${base}-离线匹配`, targets, rows)
+  show(`按规则匹配 ${rows.length} 行，已下载 CSV`)
+}
 
 const targetColumns = computed(() => intent.value?.target_template?.columns || [])
 const requiredTargets = computed(() => {
@@ -533,10 +666,7 @@ function mappingValid(row) {
   return !!file && (file.columns || []).includes(row.column)
 }
 
-/* ---------------- 拼接 / 派生表达式 ----------------
- * 源表列不够用时，目标列可以写成 `{起始日期} {起始时间}`、`加班`、`{天}*8`，
- * 校验规则和后端 ColumnExpressions 一致：花括号里必须是这张表真实存在的列。
- */
+// ---------------- 拼接 / 派生表达式 ----------------
 function columnsOfFile(fileId) {
   const file = sourceFiles.value.find((item) => item.file_id === fileId)
   return file ? file.columns || [] : []
@@ -663,7 +793,7 @@ const templateFileId = computed(() => templateFile.value?.file_id || '')
 // 后端在解析时给的处理提示，比如模板列没有数据来源、表头下移等
 const intentNotes = computed(() => intent.value?.notes || [])
 
-/* ---------------- 智能体轨迹展示 ---------------- */
+// ---------------- 智能体轨迹展示 ----------------
 const agentToolCount = computed(() => new Set(agentSteps.value.map((item) => item.tool).filter(Boolean)).size)
 
 const agentElapsedText = computed(() => {
@@ -847,7 +977,7 @@ const statusText = computed(() => {
   return '处理中'
 })
 
-/* ---------------- 小工具 ---------------- */
+// ---------------- 小工具 ----------------
 
 function sizeText(bytes) {
   if (!bytes) return '—'
@@ -897,7 +1027,7 @@ function resetResult() {
   stopPolling()
 }
 
-/* ============ 区块 1：上传 ============ */
+// ============ 区块 1：上传 ============
 
 // 后端对接点位：POST /api/files/upload（multipart: file + role）
 async function uploadSource(options) {
@@ -912,6 +1042,38 @@ async function uploadSource(options) {
   }
   sourceUploadCount.value += 1
   try {
+    // 离线：不发给后端，直接在浏览器里解析，规则对齐用内置词典
+    if (offlineMode.value) {
+      const table = await readTable(file)
+      const same = sourceFiles.value.find((item) => item.name === file.name)
+      if (same) {
+        Object.assign(same, {
+          size: file.size,
+          columns: table.columns,
+          sheets: [{ name: table.name, rows: table.rows.length }],
+          sample: sampleOfTable(table)
+        })
+        offlineTables.value[same.file_id] = table
+        show(`${file.name} 已在本地重新解析，源表里只保留一份`)
+      } else {
+        const meta = {
+          file_id: `local-${Math.random().toString(36).slice(2, 10)}`,
+          name: file.name,
+          size: file.size,
+          role: 'auto',
+          columns: table.columns,
+          sheets: [{ name: table.name, rows: table.rows.length }],
+          sample: sampleOfTable(table),
+          offline: true
+        }
+        sourceFiles.value.push(meta)
+        offlineTables.value[meta.file_id] = table
+        show(`${file.name} 已在本地解析，识别到 ${table.columns.length} 个表头（离线规则匹配）`)
+      }
+      saveOffline()
+      resetResult()
+      return
+    }
     const meta = await api.upload(file, 'auto')
     // 同一个文件再次上传时后端会覆盖旧记录（不新增），这里再拦一道，避免列表出现两条一样的源表
     const existed = sourceFiles.value.find((item) => item.file_id === meta.file_id)
@@ -942,6 +1104,24 @@ async function uploadSource(options) {
 async function uploadTemplate(options) {
   templateUploadCount.value += 1
   try {
+    // 离线：模板也只在本地读表头，导出列的顺序完全按它
+    if (offlineMode.value) {
+      const table = await readTable(options.file)
+      templateFile.value = {
+        file_id: `local-tpl-${Math.random().toString(36).slice(2, 10)}`,
+        name: options.file.name,
+        size: options.file.size,
+        role: 'target_template',
+        columns: table.columns,
+        sheets: [{ name: table.name, rows: table.rows.length }],
+        sample: sampleOfTable(table),
+        offline: true
+      }
+      saveOffline()
+      resetResult()
+      show(`目标模板已在本地解析，共 ${table.columns.length} 列`)
+      return
+    }
     const meta = await api.upload(options.file, 'target_template')
     const sameTemplate = templateFile.value && templateFile.value.file_id === meta.file_id
     templateFile.value = meta
@@ -985,12 +1165,9 @@ function removeTemplate() {
   resetResult()
 }
 
-/* ============ 区块 2：字段映射 ============ */
+// ============ 区块 2：字段映射 ============
 
-/**
- * 文件或业务口径变了，旧方案就不再对应当前输入。
- * 这里只作废，不自动重跑：什么时候发给智能体，由用户点按钮决定。
- */
+// 文件或业务口径变了，旧方案就不再对应当前输入。
 function invalidatePlan() {
   intent.value = null
   mappings.value = []
@@ -999,7 +1176,6 @@ function invalidatePlan() {
   planStale.value = false
   resetAgent()
 }
-
 
 // 后端对接点位：POST /api/agent/plan（智能体工具链：读表 → 识别 → 查记忆 → 校验 → 自修 → 交人）
 async function analyzeNow(silent = false) {
@@ -1082,10 +1258,7 @@ async function startPlanning() {
   }
 }
 
-/**
- * 智能体的返回结构和原 /analyze 只差一段轨迹：
- * intent 仍然是前端熟悉的字段，这里只多做“把轨迹和经验也存下来”这一步。
- */
+// 智能体的返回结构和原 /analyze 只差一段轨迹：
 function applyAgentPlan(plan) {
   const data = plan?.intent || plan || {}
   resetAgent()
@@ -1106,9 +1279,7 @@ function applyAgentPlan(plan) {
   applySuggestedMappings(data.mapping || [])
 }
 
-/**
- * 重新推荐时保留用户手工改过的行，避免一解析就把人工映射冲掉。
- */
+// 重新推荐时保留用户手工改过的行，避免一解析就把人工映射冲掉。
 function applySuggestedMappings(list) {
   const manual = new Map(mappings.value.filter((row) => row.manual).map((row) => [row.target, row]))
   const next = list.map((item) => {
@@ -1186,7 +1357,7 @@ function resetDraftFile(fileId) {
   mappingDraft.value.column = ''
 }
 
-/* ---------------- 拼接 / 派生字段编辑器 ---------------- */
+// ---------------- 拼接 / 派生字段编辑器 ----------------
 const exprDialog = ref({ visible: false, target: '', fileId: '', fileIndex: -1, text: '' })
 
 const exprDialogError = computed(() =>
@@ -1256,7 +1427,7 @@ function clearExpr() {
   show('已清除拼接规则，请重新选择源字段')
 }
 
-/* ---------------- 映射方案（服务端保存，浏览器本地兜底） ---------------- */
+// ---------------- 映射方案（服务端保存，浏览器本地兜底） ----------------
 
 const LOCAL_SCHEME_KEY = 'huibiao.mapping.schemes'
 
@@ -1414,7 +1585,7 @@ async function removeScheme() {
   show(`已删除方案「${scheme.name}」`)
 }
 
-/* 把这一页的智能体进度同步到左侧导航栏；离开这一页就收起，不把上一单的状态带出去 */
+// 把这一页的智能体进度同步到左侧导航栏；离开这一页就收起，不把上一单的状态带出去
 function syncRail() {
   if (workspaceMode.value === 'agent') return
   railState.value = agentStateText.value
@@ -1443,11 +1614,7 @@ watch(railMemoryRequest, (n) => {
   if (n && workspaceMode.value !== 'agent') memoryVisible.value = true
 })
 
-/* ---------- 断点续看：刷新 / 直接输地址后，回到工作台还能接着看 ----------
- * 站内切页已经由 App.vue 的 keep-alive 保住内存状态；这里再把“现场”写进
- * sessionStorage，覆盖 F5 刷新、开发时热更新这几种情况。
- * 只存元数据、规划和任务 ID，结果行不存（结果表按 task_id 从后端分页拉）。
- */
+// ---------- 断点续看：刷新 / 直接输地址后，回到工作台还能接着看 ----------
 const STORE_KEY = 'huibiao.workbench.v1'
 const STORE_TTL = 12 * 60 * 60 * 1000
 let saveTimer = null
@@ -1543,8 +1710,10 @@ watch(
 
 onMounted(() => {
   restoreSnapshot()
+  // 断网后刷新页面：接着用上一次本地解析的表，而不是空手重来
+  if (offlineMode.value) restoreOffline()
   mountTopbar()
-  // 两种模式都保留左侧状态条：桥接模式显示本次调用的原子能力，标准模式显示转换动作
+  // 两种模式都保留左侧状态条：桥接模式显示本次调用的原子能力，普通模式显示转换动作
   railVisible.value = true
   railScope.value = workspaceMode.value === 'agent' ? 'bridge' : 'standard'
   loadSchemes()
@@ -1552,8 +1721,6 @@ onMounted(() => {
 })
 
 // 被 keep-alive 缓存后，离开页面只会触发 deactivated（不会卸载），
-// 所以要在这里把顶栏和右侧状态轨交还出去，回来时再重新挂上，
-// 中间的轮询继续跑，任务跑完了切回来能直接看到结果。
 onActivated(() => {
   mountTopbar()
   railVisible.value = true
@@ -1571,7 +1738,7 @@ onDeactivated(() => {
   railVisible.value = false
 })
 
-/* ============ 区块 3：业务规则 ============ */
+// ============ 区块 3：业务规则 ============
 
 function applyQuickRule(rule) {
   brief.value = rule.text
@@ -1586,7 +1753,7 @@ function onBriefInput() {
   planStale.value = !!intent.value
 }
 
-/* ============ 区块 4：执行 ============ */
+// ============ 区块 4：执行 ============
 
 function configPayload() {
   return {
@@ -1669,7 +1836,7 @@ function stopPolling() {
   }
 }
 
-/* ============ 区块 5：下载 ============ */
+// ============ 区块 5：下载 ============
 
 function downloadResult() {
   if (!resultUrl.value) return
@@ -1681,10 +1848,7 @@ function downloadResult() {
   link.remove()
 }
 
-/**
- * 异常日志按前端生成 csv，方便业务直接丢进 Excel 复核；
- * 后端另外还会产出一份异常日志 xlsx，可在任务详情里下载。
- */
+// 异常日志按前端生成 csv，方便业务直接丢进 Excel 复核；
 function downloadAnomaliesCsv() {
   const rows = anomalyRows.value
   if (!rows.length) return
@@ -1704,10 +1868,7 @@ function downloadAnomaliesCsv() {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-/**
- * 一句话改结果：后端负责把话翻译成操作（改值 / 加减 / 删行 / 排序 / 加列），
- * 再按原源表重算、重放、重新导出，页面只负责把结果和修改记录展示出来。
- */
+// 一句话改结果：后端负责把话翻译成操作（改值 / 加减 / 删行 / 排序 / 加列），
 // 点「试试」里的句子只是填词，真正的提交交给「让智能体改」或回车，
 // 避免点一下就把请求发给大模型、用户还不知道改了什么。
 function useEditSample(text) {
@@ -1778,7 +1939,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page agentdesk">
+  <div class="page agentdesk" :class="{ 'is-agent': workspaceMode === 'agent' }">
     <!-- 连不上服务的提示统一在顶栏下方那条全局提示里，正文不再单独摆一条 -->
 
     <!-- 模式切换在顶栏右侧；窄屏顶栏是隐藏的，这里兜个底 -->
@@ -1789,7 +1950,7 @@ onBeforeUnmount(() => {
         type="button"
         @click="switchMode('standard')"
       >
-        标准模式
+        普通模式
       </button>
       <button
         class="ad-mode-pill"
@@ -1801,7 +1962,10 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <BridgeAgent v-if="workspaceMode === 'agent'" />
+    <BridgeAgent v-if="workspaceMode === 'agent'" @switch-mode="switchMode('standard')" />
+
+    <!-- 知识库弹窗：顶栏按钮打开，两种模式下都能挂载制度与口径文档 -->
+    <KnowledgeDialog v-model="knowledgeOpen" />
 
     <div v-if="workspaceMode === 'standard'" class="ad-layout">
       <div class="ad-work">
@@ -1834,11 +1998,19 @@ onBeforeUnmount(() => {
           <header class="ad-card-head">
             <div>
               <span class="ad-kicker">01 · 交接</span>
-              <h2>把这一单交给智能体</h2>
-              <p>源表和目标模板你来给，读表、理解口径、写映射由它完成。</p>
+              <h2>{{ offlineMode ? '离线也能先对好字段' : '把这一单交给智能体' }}</h2>
+              <p v-if="offlineMode">
+                当前连不上服务：表格在本地解析、字段按内置词典对齐，结果可直接下载 CSV；
+                AI 规划与大模型问答要联网后再用。
+              </p>
+              <p v-else>源表和目标模板你来给，读表、理解口径、写映射由它完成。</p>
             </div>
             <div class="ad-head-tools">
-              <span class="ad-head-state" :class="`is-${agentStateTone}`">
+              <span
+                class="ad-head-state"
+                :class="`is-${agentStateTone}`"
+                :title="offlineMode ? OFFLINE_HINT : ''"
+              >
                 <i />{{ agentStateText }}
               </span>
               <!-- 现场会跨刷新保留，所以给一个明确的“重开一单”出口 -->
@@ -1865,7 +2037,7 @@ onBeforeUnmount(() => {
                 :disabled="sourceUploading"
               >
                 <div class="ad-drop-inner">
-                  <span class="ad-drop-icon"><Icon name="upload" :size="19" /></span>
+                  <span class="ad-drop-icon"><Icon name="upload" :size="28" /></span>
                   <b>{{ sourceUploading ? '正在读表…' : '源数据表' }}</b>
                   <span>拖入或点击选择，可多选 · .xlsx / .xls / .csv</span>
                 </div>
@@ -1881,7 +2053,7 @@ onBeforeUnmount(() => {
                 :disabled="templateUploading"
               >
                 <div class="ad-drop-inner">
-                  <span class="ad-drop-icon"><Icon name="file" :size="18" /></span>
+                  <span class="ad-drop-icon"><Icon name="file" :size="28" /></span>
                   <b>{{ templateUploading ? '正在解析模板…' : '目标模板' }}</b>
                   <span>决定导出列与顺序，单个文件</span>
                 </div>
@@ -1921,8 +2093,45 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <!-- 离线：规则映射 + CSV 下载。没有模型参与，所以不摆「交给智能体」的按钮， -->
+            <div v-if="offlineMode" class="ad-offline">
+              <div class="ad-offline-head">
+                <b>规则匹配结果</b>
+                <span v-if="offlineMapping.length">
+                  已对上 {{ offlineMatched }} / {{ offlineMapping.length }} 列
+                </span>
+                <span v-else>上传源表和模板后自动对齐</span>
+              </div>
+              <div v-if="offlineMapping.length" class="ad-offline-list">
+                <div v-for="row in offlineMapping" :key="row.target" class="ad-offline-row">
+                  <span class="ad-offline-target">{{ row.target }}</span>
+                  <span class="ad-offline-arrow">←</span>
+                  <span v-if="row.fixed" class="ad-offline-src is-fixed">固定值「{{ row.fixed }}」</span>
+                  <span v-else-if="row.column" class="ad-offline-src">{{ row.file }} · {{ row.column }}</span>
+                  <span v-else class="ad-offline-src is-miss">没找到对应列</span>
+                  <span class="ad-offline-why">{{ row.reason }}</span>
+                </div>
+              </div>
+              <p v-else class="ad-offline-tip">
+                离线只做规则匹配：同义表头（工号 / 员工编号、姓名 / 申请人）会自动对上，
+                对不上的列留空并标出来，不会猜。
+              </p>
+              <div class="ad-offline-foot">
+                <span class="ad-muted">
+                  {{ sourceFiles.length }} 张源表 · {{ templateReady ? '模板已就位' : '待上传模板' }}
+                </span>
+                <button
+                  class="ad-primary"
+                  :disabled="!sourceFiles.length || !templateReady"
+                  @click="downloadOfflineResult"
+                >
+                  <Icon name="download" :size="14" />下载匹配结果
+                </button>
+              </div>
+            </div>
+
             <!-- 对话式规则：和智能体说一句业务口径，不必填表 -->
-            <div class="ad-composer">
+            <div v-if="!offlineMode" class="ad-composer">
               <span class="ad-composer-line" aria-hidden="true"></span>
               <div class="ad-composer-body">
                 <div class="ad-composer-head">
@@ -2020,7 +2229,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </section>
-
 
         <!-- ================= 阶段 2：核对 ================= -->
         <section v-show="step === 2" class="ad-card ad-plan">
@@ -2573,10 +2781,15 @@ onBeforeUnmount(() => {
             <button class="ad-ghost" :disabled="step === 1" @click="prevStep">
               <Icon name="left" :size="13" />上一步
             </button>
-            <button v-if="step < 3" class="ad-primary" :disabled="!canLeave" @click="nextStep">
+            <button v-if="step < 3 && !offlineMode" class="ad-primary" :disabled="!canLeave" @click="nextStep">
               {{ nextLabel }}<Icon name="right" :size="13" />
             </button>
-            <template v-else>
+            <template v-if="offlineMode">
+              <button class="ad-primary" :disabled="!sourceFiles.length || !templateReady" @click="downloadOfflineResult">
+                <Icon name="download" :size="14" />下载匹配结果
+              </button>
+            </template>
+            <template v-else-if="step === 3">
               <button class="ad-ghost" @click="resetAll">再交一单</button>
               <button class="ad-primary" @click="router.push('/tasks')">查看任务记录</button>
             </template>
@@ -2586,7 +2799,6 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
-
 
 <style scoped>
 /* 主色对齐站内其它页面，Element Plus 的组件变量只在这一页生效 */
@@ -3692,6 +3904,12 @@ onBeforeUnmount(() => {
   padding-bottom: 8px;
 }
 
+/* 智能体模式不限制正文宽度：它自己是「主工作区 + 右侧运行检查器」的双栏，
+   限到 1080px 就只剩单列、右侧整片空白。普通模式保持上面的收窄行宽。 */
+.agentdesk.is-agent {
+  max-width: none;
+}
+
 .agentdesk :where(button) {
   font-family: inherit;
 }
@@ -3965,6 +4183,18 @@ onBeforeUnmount(() => {
   background: #d99a2b;
 }
 
+/* 离线：琥珀色，和「等待」的暖色接近但更实心，鼠标悬浮有说明 */
+.ad-head-state.is-off {
+  border-color: #f0d9a8;
+  background: #fdf6e5;
+  color: #9a6a12;
+  cursor: help;
+}
+
+.ad-head-state.is-off i {
+  background: #d9911f;
+}
+
 @keyframes adPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -4031,50 +4261,49 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 100%;
   height: auto;
-  padding: 0;
-  border: 1px dashed #cfd5df;
-  border-radius: 10px;
-  background:
-    repeating-linear-gradient(135deg, rgb(43 95 217 / 2.2%) 0 8px, transparent 8px 16px),
-    #fbfcfe;
-  transition: border-color 0.18s ease, background 0.18s ease;
+  min-height: 104px;
+  padding: 20px 18px;
+  border: 1px dashed #dcdfe6;
+  border-radius: 4px;
+  background: #fff;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .ad-drop :deep(.el-upload-dragger:hover) {
-  border-color: var(--ad-blue);
-  background: var(--ad-blue-soft);
+  border-color: #c0c4cc;
+  background: #fafafa;
 }
 
 .ad-drop-inner {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
   flex-direction: column;
-  padding: 22px 16px;
+  padding: 0;
   text-align: center;
 }
 
-.ad-drop-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  margin-bottom: 4px;
-  border: 1px solid #d9e2f5;
-  border-radius: 9px;
-  background: #fff;
-  color: var(--ad-blue);
+/* 投放区里只留一个中性小图标，不再套白底圆角底片 */
+.ad-drop-inner .ad-drop-icon {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: #909399;
 }
 
 .ad-drop-inner b {
-  color: var(--ad-ink);
-  font-size: 13px;
-  font-weight: 600;
+  color: #303133;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .ad-drop-inner span {
-  color: var(--ad-ink-3);
-  font-size: 11.5px;
+  color: #909399;
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -4205,6 +4434,112 @@ onBeforeUnmount(() => {
   gap: 5px;
   flex-wrap: wrap;
   margin-top: 7px;
+}
+
+/* 离线规则匹配：和「对话式规则」同一位置，但换一套暖色，
+ * 让用户一眼看出这块没有模型参与，是确定性的规则结果 */
+.ad-offline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #f0e0c2;
+  border-radius: 11px;
+  background:
+    radial-gradient(120% 100% at 0% 0%, rgb(217 145 31 / 7%) 0%, transparent 55%),
+    #fffdf7;
+}
+
+.ad-offline-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.ad-offline-head b {
+  color: var(--ad-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ad-offline-head span {
+  color: #9a7a3d;
+  font-size: 11px;
+}
+
+.ad-offline-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #f1e4cc;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ad-offline-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.1fr) 14px minmax(0, 1.9fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 11px;
+  border-bottom: 1px solid #f4ebdb;
+  font-size: 12px;
+}
+
+.ad-offline-row:last-child {
+  border-bottom: 0;
+}
+
+.ad-offline-target {
+  overflow: hidden;
+  color: var(--ad-ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad-offline-arrow {
+  color: #b59a6a;
+  text-align: center;
+}
+
+.ad-offline-src {
+  overflow: hidden;
+  color: #5c5238;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad-offline-src.is-fixed {
+  color: #2f7a55;
+}
+
+.ad-offline-src.is-miss {
+  color: #b1560f;
+}
+
+.ad-offline-why {
+  color: var(--ad-ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ad-offline-tip {
+  margin: 0;
+  color: var(--ad-ink-3);
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+
+.ad-offline-foot {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px dashed #ecdcbe;
 }
 
 /* 对话式规则 */
@@ -5299,7 +5634,6 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
 }
-
 
 /* 兼容旧映射表格的观感 */
 .agentdesk :deep(.nt-req) {

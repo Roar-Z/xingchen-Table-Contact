@@ -10,12 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 工具注册表。
- *
- * 直接从 {@link AgentService.Session} 上的 @Tool 注解反射出来，避免“文档里写的工具”
- * 和“模型真正能调的工具”对不上；以后加工具只改一处，运行面板自动出现。
- */
+// 工具注册表。
 @Service
 public class AgentToolCatalog {
 

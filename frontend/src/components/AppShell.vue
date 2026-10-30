@@ -5,9 +5,11 @@ import Icon from './Icon.vue'
 import logoMark from '../assets/logo-mark.png'
 import { api, apiState } from '../api'
 import { clearNotice, noticeRetry, noticeText, retryNotice } from '../appNotice'
+import { OFFLINE_HINT } from '../offline'
 import { useToast } from '../toast'
 import {
   railDetail,
+  railLessons,
   railMemory,
   railMemoryRequest,
   railScope,
@@ -36,17 +38,30 @@ const currentTitle = computed(() => {
   return route.meta.title || '新建任务'
 })
 
+// 文档页：正文是自己仓库里的静态页，跟后端在不在线没关系，所以这页不挂任何提示条
+const docPage = computed(() => route.name === 'doc-product' || route.name === 'doc-dev')
+
+// 断网不再说「服务连接中断」——那像故障。断网时能用的功能都还在，
+// 手动「重试」时要能看出真的在检测：请求期间状态文案换成「正在检测连接」
+const probing = ref(false)
+
 const onlineText = computed(() => {
+  if (probing.value) return '正在检测连接'
   if (apiState.online === null) return '正在连接服务'
-  return apiState.online ? '服务运行正常' : '服务连接中断'
+  return apiState.online ? '服务运行正常' : '离线模式'
 })
 
 const onlineClass = computed(() => {
   if (apiState.online === null) return 'unknown'
-  return apiState.online ? 'on' : 'off'
+  return apiState.online ? 'on' : 'offline'
 })
 
-// 左下角那一行汇总：桥接模式的“步”是规划器排出的子任务数，标准模式是已跑完的动作数；
+const onlineTitle = computed(() => {
+  if (probing.value) return '正在重新检测连接'
+  return apiState.online === false ? OFFLINE_HINT : '点一下重新检测'
+})
+
+// 左下角那一行汇总：桥接模式的“步”是规划器排出的子任务数，普通模式是已跑完的动作数；
 // 没有步数（还没规划 / 正在规划）时只留规则条数，状态已经由上面的状态点交代
 function isActive(name) {
   if (name === 'tasks') return route.name === 'tasks' || route.name === 'task-detail'
@@ -57,66 +72,115 @@ function isActive(name) {
 // 后端可能在跑着跑着被停掉，也可能晚于前端启动，所以定期探一次，不要只在打开页面时探
 let probeTimer = null
 
-// 换页面时把上一条提示清掉，避免 A 页的报错跟着出现在 B 页
+// 换页面时把上一条提示清掉，避免 A 页的报错跟着出现在 B 页；
+// 离线说明条不跟着翻页消失（它只在用户点 × 或恢复连接后才收起）
 watch(() => route.fullPath, () => {
   clearNotice()
-  offlineMuted.value = false
+  if (apiState.online !== false) offlineMuted.value = false
 })
 
-/* ---------------- 顶栏下方的统一提示条 ----------------
- * 两种来源：页面自己报的错（noticeText），以及服务连不上。
- * 都只在同一处显示，各页正文里不再各摆一条红带。
- */
+// ---------------- 顶栏下方的统一提示条 ----------------
 const offlineMuted = ref(false)
+// 手动重试失败时，提示条文案要换成「重试失败」，否则和之前一字不差，看起来像没点
+const retryFailed = ref(false)
+
+// 亮出离线说明（已经关掉的，用户点重试时再挂回来）
+function startOfflineNotice() {
+  offlineMuted.value = false
+}
 
 watch(
   () => apiState.online,
   (online) => {
-    if (online) offlineMuted.value = false
+    retryFailed.value = false
+    if (online) {
+      offlineMuted.value = false
+      return
+    }
+    // 刚进入离线：说明条一直挂着，由用户自己关
+    if (apiState.online === false) startOfflineNotice()
   }
 )
 
 const noticeBarText = computed(() => {
   if (noticeText.value) return noticeText.value
-  if (apiState.online === false && !offlineMuted.value) return '暂时连不上服务，请稍后刷新页面重试。'
+  // 文档页不提示离线：文档在 public/docs 里，后端停了照样能翻
+  if (docPage.value) return ''
+  if (apiState.online === false && !offlineMuted.value) {
+    if (retryFailed.value) {
+      return '重试失败：还是连不上服务，当前保持离线模式；本地解析、规则对齐和下载 CSV 照常可用。'
+    }
+    return '当前为离线模式：断网时表格仍在本地解析、字段按内置词典对齐，表格智作可按规则建表并下载 CSV；AI 规划与大模型问答暂不可用。'
+  }
   return ''
 })
 
 const noticeBarRetry = computed(() => (noticeText.value ? !!noticeRetry.value : apiState.online === false))
 
 function onNoticeRetry() {
-  if (noticeText.value) retryNotice()
-  else probeHealth()
+  if (noticeText.value) {
+    retryNotice()
+    return
+  }
+  retryConnection()
 }
 
 function dismissNotice() {
-  if (noticeText.value) clearNotice()
-  else offlineMuted.value = true
+  if (noticeText.value) {
+    clearNotice()
+    return
+  }
+  offlineMuted.value = true
 }
 
-function probeHealth() {
-  api.health().catch(() => {})
+// 定时探测：静默处理，成功失败都由 api.js 写回 apiState.online
+async function probeHealth() {
+  if (probing.value) return
+  probing.value = true
+  try {
+    await api.health()
+  } catch (e) {
+    // 失败已经记在 apiState 里，状态点和提示条会自己更新
+  } finally {
+    probing.value = false
+  }
+}
+
+// 用户手动点「重试」：不仅探一次，还要给出明确结果——
+async function retryConnection() {
+  if (probing.value) return
+  startOfflineNotice()
+  probing.value = true
+  try {
+    await api.health()
+    retryFailed.value = false
+    show('已恢复连接，正在切回在线模式')
+  } catch (e) {
+    retryFailed.value = true
+    show('仍然连不上服务，当前保持离线模式', 'err')
+  } finally {
+    probing.value = false
+  }
+}
+
+// 点左下角状态点：离线时当作「重试」，在线时只是重新探一次，不弹提示
+function onNetClick() {
+  if (apiState.online === false) retryConnection()
+  else probeHealth()
 }
 
 function onVisible() {
   if (document.visibilityState === 'visible') probeHealth()
 }
 
-/* ---------------- 左下角设置菜单 ----------------
- * 点齿轮打开，点页面别处或按 Esc 收起，和主流应用的侧边栏设置菜单一致
- */
+// ---------------- 左下角设置菜单 ----------------
 const settingsOpen = ref(false)
 
 function closeSettings() {
   settingsOpen.value = false
 }
 
-/**
- * 设置菜单里的「运行观测」：先收起菜单，再显式跳转。
- * 不能只靠 router-link 的默认行为——菜单是用 v-if 控制的，点击时菜单先被移除，
- * 有时会把跳转吞掉；而且已经停在运行观测页时，同样的地址再点一次不会有任何反应，
- * 看起来就像“点了没进入”。这里两种情况都兜住：没在页面上就 push，已经在页面上就就地刷新。
- */
+// 设置菜单里的「运行观测」：先收起菜单，再显式跳转。
 function openOps() {
   closeSettings()
   if (route.name === 'ops') {
@@ -127,10 +191,14 @@ function openOps() {
   router.push('/ops')
 }
 
-/* ---------------- 设置菜单里的「清理数据 / 清理日志」 ----------------
- * 清的是运行观测那一页的内容：清理数据 = 运行记录与统计，清理日志 = 审计日志。
- * 两个动作各要求手输一句不同的话，少一个字、抄错都不放行；接口那头也校验同一句话。
- */
+// 设置菜单里的「产品设计文档 / 开发文档」：文档在右侧内容区里打开，
+function openDoc(path, name) {
+  closeSettings()
+  if (route.name === name) return
+  router.push(path)
+}
+
+// ---------------- 设置菜单里的「清理数据 / 清理日志 / 删除所有表格」 ----------------
 const { show } = useToast()
 
 const clean = reactive({
@@ -141,22 +209,49 @@ const clean = reactive({
   error: ''
 })
 
-// 清理数据 → 「确认清理数据」，清理日志 → 「确认清理日志」
-const confirmWord = computed(() =>
-  clean.kind === 'audit' ? '确认清理日志' : '确认清理数据'
-)
+// 清理数据 → 「确认清理数据」，清理日志 → 「确认清理日志」，删表格 → 「确认删除表格」
+const confirmWord = computed(() => {
+  if (clean.kind === 'audit') return '确认清理日志'
+  if (clean.kind === 'sheets') return '确认删除表格'
+  return '确认清理数据'
+})
 
-const cleanMeta = computed(() =>
-  clean.kind === 'audit'
-    ? {
-        title: '清理运行日志',
-        desc: '会删除运行观测里的全部审计日志（最多 100 条）。任务、表格和运行统计不受影响，但操作留痕会丢失，删除后无法恢复。'
-      }
-    : {
-        title: '清理运行数据',
-        desc: '会清空运行观测里的全部运行记录，成功率、兜底率、Token 消耗等统计随之归零。任务和表格数据不受影响，但历史运行记录删除后无法恢复。'
-      }
-)
+const cleanMeta = computed(() => {
+  if (clean.kind === 'audit') {
+    return {
+      title: '清理运行日志',
+      desc: '只清空审计日志，运行记录、统计与经验记忆都保留。',
+      items: ['全部审计日志（本地最多保留 100 条）', '操作留痕删除后无法恢复'],
+      action: '清理'
+    }
+  }
+  if (clean.kind === 'sheets') {
+    return {
+      title: '删除所有表格数据',
+      desc: '清空「表格智作」仓库，并删除任务记录、智能体数据集和上传/导出副本，运行观测不受影响。',
+      items: [
+        '所有表格及其表格文件（data/sheets 下的 xlsx）',
+        '表格操作日志、删表留痕和撤销快照',
+        '任务记录及任务输出文件（任务列表随之清空）',
+        '智能体模式的数据集（data/bridge/datasets，含源表、方案与产出）',
+        '上传副本（data/uploads）与默认导出副本（frontend/downloads）',
+        '你电脑上的原始文件、自定义导出目录里的文件不会被删',
+        '删除后无法恢复'
+      ],
+      action: '全部删除'
+    }
+  }
+  return {
+    title: '清空运行数据',
+    desc: '把运行观测恢复到初始状态，任务和表格数据不受影响。',
+    items: [
+      '全部运行记录，成功率 / 兜底率 / Token 统计随之归零',
+      '智能体沉淀的经验记忆',
+      '全部审计日志（含本次清理动作本身的留痕）'
+    ],
+    action: '清空'
+  }
+})
 
 function openClean(kind) {
   closeSettings()
@@ -172,6 +267,11 @@ function closeClean() {
   clean.open = false
 }
 
+// 删完数据后让当前页面自己刷新一次。
+function refreshPage() {
+  window.setTimeout(() => window.location.reload(), 400)
+}
+
 async function submitClean() {
   if (clean.busy) return
   if (clean.input.trim() !== confirmWord.value) {
@@ -181,16 +281,29 @@ async function submitClean() {
   clean.busy = true
   clean.error = ''
   try {
-    const res = clean.kind === 'audit'
-      ? await api.clearAuditLogs(confirmWord.value)
-      : await api.clearAgentRuns(confirmWord.value)
-    const count = res?.cleared ?? 0
-    clean.open = false
-    show(clean.kind === 'audit' ? `已清理 ${count} 条运行日志` : `已清理 ${count} 条运行记录`)
-    // 正停在运行观测页时让它就地重新拉一遍，不用手动刷新
-    if (route.name === 'ops') window.dispatchEvent(new Event('huibiao:ops-cleared'))
+    if (clean.kind === 'sheets') {
+      const res = await api.clearAllSheets(confirmWord.value)
+      const sheets = res?.cleared ?? 0
+      const tasks = res?.tasks_cleared ?? 0
+      const bridge = res?.bridge_cleared ?? 0
+      const uploads = res?.uploads_cleared ?? 0
+      const exports = res?.exports_cleared ?? 0
+      clean.open = false
+      show(`已删除 ${sheets} 张表格、${tasks} 条任务记录、${bridge} 个智能体数据集，并清理 ${uploads} 份上传副本、${exports} 份导出副本`)
+      refreshPage()
+    } else {
+      const res = clean.kind === 'audit'
+        ? await api.clearAuditLogs(confirmWord.value)
+        : await api.clearAgentRuns(confirmWord.value)
+      const count = res?.cleared ?? 0
+      clean.open = false
+      show(clean.kind === 'audit' ? `已清理 ${count} 条运行日志` : `已清空 ${count} 条运行记录`)
+      // 清理的是运行观测，停在该页时让它就地重新拉一遍，不用手动刷新
+      if (route.name === 'ops') window.dispatchEvent(new Event('huibiao:ops-cleared'))
+      else refreshPage()
+    }
   } catch (err) {
-    clean.error = err.message || '清理失败，请稍后再试'
+    clean.error = err.message || '操作失败，请稍后再试'
   } finally {
     clean.busy = false
   }
@@ -272,20 +385,24 @@ onBeforeUnmount(() => {
             :key="tool.key"
             class="nav-rail-tool"
             :class="`is-${tool.state}`"
-            :title="tool.hint"
+            :title="tool.hint || tool.label"
           >
-            <b>{{ tool.label }}</b>
-            <em>{{ tool.hint }}</em>
+            <span class="nav-rail-tool-text">
+              <b>{{ tool.label }}</b>
+              <em v-if="tool.hint">{{ tool.hint }}</em>
+            </span>
           </span>
         </div>
         <div class="nav-rail-foot">
           <span class="nav-rail-sum">
-            <template v-if="railSteps > 0">{{ railSteps }} 步 · </template>{{ railMemory }} {{ railScope === 'bridge' ? '条规则' : '条经验' }}
+            <template v-if="railSteps > 0">{{ railSteps }} 步 · </template>
+            <template v-if="railScope === 'bridge'">{{ railMemory }} 条规则 · {{ railLessons }} 条经验</template>
+            <template v-else>{{ railMemory }} 条经验</template>
           </span>
           <button
             type="button"
             class="nav-rail-more"
-            :title="railScope === 'bridge' ? '打开自定义字段匹配规则' : '打开历史方案记忆'"
+            :title="railScope === 'bridge' ? '打开字段规则与经验记忆' : '打开历史方案记忆'"
             @click="railMemoryRequest += 1"
           >
             管理
@@ -295,9 +412,9 @@ onBeforeUnmount(() => {
 
       <div class="sidebar-foot">
         <div class="foot-row">
-          <span class="net" title="点一下重新检测" @click="probeHealth">
+          <span class="net" :title="onlineTitle" @click="onNetClick">
             <i class="net-dot" :class="onlineClass" />
-            {{ onlineText }}
+            {{ probing ? '正在检测连接' : onlineText }}
           </span>
           <!-- 设置入口贴在最右侧；产品/开发文档和运行观测收进菜单，图标行不再堆一排 -->
           <div class="foot-links">
@@ -323,32 +440,37 @@ onBeforeUnmount(() => {
                 <Icon name="shield" :size="13" />运行观测
                 <span v-if="route.name === 'ops'" class="foot-menu-hint">当前</span>
               </button>
-              <a
+              <button
+                type="button"
                 class="foot-menu-item"
-                href="/docs/product.html"
-                target="_blank"
-                rel="noreferrer"
-                @click="closeSettings"
+                :class="{ 'is-current': route.name === 'doc-product' }"
+                @click="openDoc('/docs/product', 'doc-product')"
               >
                 <Icon name="book" :size="13" />产品设计文档
-              </a>
-              <a
+                <span v-if="route.name === 'doc-product'" class="foot-menu-hint">当前</span>
+              </button>
+              <button
+                type="button"
                 class="foot-menu-item"
-                href="/docs/dev.html"
-                target="_blank"
-                rel="noreferrer"
-                @click="closeSettings"
+                :class="{ 'is-current': route.name === 'doc-dev' }"
+                @click="openDoc('/docs/dev', 'doc-dev')"
               >
                 <Icon name="code" :size="13" />开发文档
-              </a>
-              <!-- 清理只针对运行观测那一页的数据，收在设置里，避免误点 -->
+                <span v-if="route.name === 'doc-dev'" class="foot-menu-hint">当前</span>
+              </button>
+              <!-- 清理与删除都收在设置里，避免误点；两个分区用分隔线区分严重程度 -->
               <div class="foot-menu-sep"></div>
-              <span class="foot-menu-head">清理</span>
+              <span class="foot-menu-head">清理运行数据</span>
               <button type="button" class="foot-menu-item is-danger" @click="openClean('runs')">
                 <Icon name="database" :size="13" />清理数据
               </button>
               <button type="button" class="foot-menu-item is-danger" @click="openClean('audit')">
                 <Icon name="trash" :size="13" />清理日志
+              </button>
+              <div class="foot-menu-sep"></div>
+              <span class="foot-menu-head">表格数据</span>
+              <button type="button" class="foot-menu-item is-danger" @click="openClean('sheets')">
+                <Icon name="table" :size="13" />删除所有表格
               </button>
             </div>
           </div>
@@ -364,7 +486,7 @@ onBeforeUnmount(() => {
           <span v-if="topbar.desc" class="topbar-desc">{{ topbar.desc }}</span>
         </div>
         <div class="topbar-side">
-          <!-- 页面级分段切换：新建任务页的 标准模式 / 智能体模式，放在仓库入口左边 -->
+          <!-- 页面级分段切换：新建任务页的 普通模式 / 智能体模式，放在仓库入口左边 -->
           <div v-if="topbar.segments.length" class="topbar-seg" role="tablist">
             <button
               v-for="item in topbar.segments"
@@ -381,6 +503,18 @@ onBeforeUnmount(() => {
               <b v-if="item.badge" class="topbar-seg-badge">{{ item.badge }}</b>
             </button>
           </div>
+          <!-- 页面级操作（如表格智作的「新建空白表」）：和右侧仓库入口并排，放在它左边 -->
+          <button
+            v-for="item in topbar.actions"
+            :key="item.key"
+            class="topbar-action"
+            type="button"
+            :title="item.hint || item.label"
+            @click="topbar.handler && topbar.handler(item.key)"
+          >
+            <Icon v-if="item.icon" :name="item.icon" :size="14" />
+            {{ item.label }}
+          </button>
           <router-link
             to="/sheets/repo"
             class="topbar-repo"
@@ -397,7 +531,13 @@ onBeforeUnmount(() => {
       <div v-if="noticeBarText" class="app-notice" role="alert">
         <Icon name="alert" :size="14" />
         <span class="app-notice-text">{{ noticeBarText }}</span>
-        <button v-if="noticeBarRetry" type="button" class="app-notice-retry" @click="onNoticeRetry">重试</button>
+        <button
+          v-if="noticeBarRetry"
+          type="button"
+          class="app-notice-retry"
+          :disabled="probing"
+          @click="onNoticeRetry"
+        >{{ probing ? '检测中…' : '重试' }}</button>
         <button type="button" class="app-notice-close" title="关闭提示" @click="dismissNotice">
           <Icon name="close" :size="12" />
         </button>
@@ -408,38 +548,57 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
-    <!-- 清理确认弹窗：必须手输「清理」两个字才可点确认，和主流产品的危险操作一致 -->
-    <div v-if="clean.open" class="clean-mask" @click.self="closeClean">
-      <div class="clean-dialog" role="dialog" aria-modal="true" :aria-label="cleanMeta.title">
-        <div class="clean-head">
-          <span class="clean-icon"><Icon name="alert" :size="15" /></span>
-          <h3>{{ cleanMeta.title }}</h3>
-        </div>
-        <p class="clean-desc">{{ cleanMeta.desc }}</p>
-        <label class="clean-label" for="clean-confirm">请输入 <b>{{ confirmWord }}</b> 以确认</label>
-        <input
-          id="clean-confirm"
-          v-model="clean.input"
-          class="clean-input"
-          type="text"
-          autocomplete="off"
-          :placeholder="confirmWord"
-          @keydown.enter="submitClean"
-        />
-        <p v-if="clean.error" class="clean-error">{{ clean.error }}</p>
-        <div class="clean-foot">
-          <button type="button" class="btn" :disabled="clean.busy" @click="closeClean">取消</button>
-          <button
-            type="button"
-            class="btn btn-danger-solid"
-            :disabled="clean.busy || clean.input.trim() !== confirmWord"
-            @click="submitClean"
-          >
-            {{ clean.busy ? '清理中…' : '确认清理' }}
-          </button>
+    <!-- 危险操作确认弹窗：标题 + 说明 + 影响清单 + 手输确认，形制对齐主流后台的确认框 -->
+    <Transition name="clean-fade">
+      <div v-if="clean.open" class="clean-mask" @click.self="closeClean">
+        <div class="clean-dialog" role="dialog" aria-modal="true" :aria-label="cleanMeta.title">
+          <header class="clean-head">
+            <h3 class="clean-title">{{ cleanMeta.title }}</h3>
+            <button type="button" class="clean-close" aria-label="关闭" @click="closeClean">
+              <Icon name="close" :size="14" />
+            </button>
+          </header>
+
+          <p class="clean-desc">{{ cleanMeta.desc }}</p>
+
+          <div class="clean-panel">
+            <span class="clean-panel-head">将删除以下内容</span>
+            <ul class="clean-list">
+              <li v-for="item in cleanMeta.items" :key="item">{{ item }}</li>
+            </ul>
+          </div>
+
+          <div class="clean-field">
+            <label class="clean-label" for="clean-confirm">
+              请输入 <b>{{ confirmWord }}</b> 以继续
+            </label>
+            <input
+              id="clean-confirm"
+              v-model="clean.input"
+              class="clean-input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              :placeholder="confirmWord"
+              @keydown.enter="submitClean"
+            />
+            <p v-if="clean.error" class="clean-error">{{ clean.error }}</p>
+          </div>
+
+          <footer class="clean-foot">
+            <button type="button" class="clean-btn" :disabled="clean.busy" @click="closeClean">取消</button>
+            <button
+              type="button"
+              class="clean-btn is-primary"
+              :disabled="clean.busy || clean.input.trim() !== confirmWord"
+              @click="submitClean"
+            >
+              {{ clean.busy ? '处理中…' : cleanMeta.action }}
+            </button>
+          </footer>
         </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -568,37 +727,71 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
+/* 步骤列表固定高度、内部滚动：条目再多也不会撑高这一块，
+ * 也不会把底部的统计行挤出侧栏 */
 .nav-rail-tools {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 5px;
+  /* 高度上限跟着窗口走：正常屏高时约 300px（和原来六七步的高度相当），
+   * 窗口矮的时候自动收窄，保证底部统计行不会被挤出侧栏 */
+  max-height: clamp(120px, calc(100vh - 380px), 300px);
   margin-top: 12px;
   padding-left: 14px;
+  padding-right: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #dfe3e9 transparent;
+  /* 纵向线段画在容器背景上：滚动时不会跟着条目一起滚走，末端渐隐 */
+  background-image: linear-gradient(180deg, #d7dce4 0%, #e4e8ee 60%, rgb(228 232 238 / 0%) 100%);
+  background-repeat: no-repeat;
+  background-position: 4px 14px;
+  background-size: 1px calc(100% - 28px);
 }
 
-/* 纵向线段：把六个动作串成一条流程，末端渐隐 */
-.nav-rail-tools::before {
-  content: '';
-  position: absolute;
-  top: 14px;
-  bottom: 14px;
-  left: 4px;
-  width: 1px;
-  background: linear-gradient(180deg, #d7dce4 0%, #e4e8ee 60%, rgb(228 232 238 / 0%) 100%);
+.nav-rail-tools::-webkit-scrollbar {
+  width: 6px;
+}
+
+.nav-rail-tools::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nav-rail-tools::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: #dfe3e9;
+}
+
+.nav-rail-tools::-webkit-scrollbar-thumb:hover {
+  background: #cbd2dc;
 }
 
 .nav-rail-tool {
   position: relative;
   display: flex;
   gap: 7px;
-  align-items: baseline;
+  align-items: flex-start;
   min-width: 0;
   min-height: 34px;
   padding: 8px 4px 8px 6px;
   border-radius: 5px;
   color: var(--muted);
   font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 环节文字整体最多两行：长结论（如导出文件清单）折到第二行后省略，
+ * 以前是不换行、直接横向越出侧栏 */
+.nav-rail-tool-text {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   line-height: 1.5;
 }
 
@@ -637,18 +830,15 @@ onBeforeUnmount(() => {
 }
 
 .nav-rail-tool b {
-  flex: none;
   color: var(--ink-2);
   font-weight: 400;
 }
 
-/* 说明文字放后面、颜色更浅，窄的时候省略，不换行 */
+/* 说明文字跟在名称后面、颜色更浅；整体受上面两行截断约束，不再单独省略 */
 .nav-rail-tool em {
-  overflow: hidden;
+  margin-left: 6px;
   color: var(--muted);
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .nav-rail-tool::before {
@@ -772,6 +962,28 @@ onBeforeUnmount(() => {
   line-height: 14px;
 }
 
+/* 顶栏里的页面级操作：和「我的仓库」同形制（白底细边框、30px 高），放在它左边 */
+.topbar-action {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.topbar-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* 顶部右侧固定入口：表格文件都在仓库里，不用先回工作台 */
 .topbar-repo {
   display: inline-flex;
@@ -806,7 +1018,9 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 清理确认弹窗：居中、白底、砖红主按钮，两行说明 + 一个必须手输的输入框 */
+/* 危险操作确认弹窗：企业后台常见形制 ——
+ * 白色卡片、8px 圆角、中性灰文字，只有一个主色按钮，不用红底图标、不用彩色描边。
+ * 层级只靠留白和一条浅灰分隔面板，尽量少用颜色。 */
 .clean-mask {
   position: fixed;
   inset: 0;
@@ -815,47 +1029,107 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(24, 28, 34, 0.42);
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .clean-dialog {
   width: 100%;
   max-width: 400px;
-  padding: 18px 20px 16px;
-  border-radius: 10px;
+  padding: 20px 24px 20px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 18px 48px rgba(20, 24, 30, 0.24);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
 }
 
 .clean-head {
   display: flex;
-  gap: 9px;
-  align-items: center;
+  gap: 12px;
+  align-items: flex-start;
 }
 
-.clean-icon {
+.clean-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.clean-close {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--danger-soft);
-  color: var(--danger);
-  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
 }
 
-.clean-head h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+.clean-close:hover {
+  background: var(--line-soft);
+  color: var(--ink-2);
 }
 
 .clean-desc {
-  margin: 10px 0 14px;
+  margin: 6px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 影响清单放一块浅灰底，比彩色提示更安静，也更好扫读 */
+.clean-panel {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+
+.clean-panel-head {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.clean-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.clean-list li {
+  position: relative;
+  padding-left: 12px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.7;
+}
+
+.clean-list li::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 2px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #c9ced8;
+}
+
+.clean-field {
+  margin-top: 16px;
 }
 
 .clean-label {
@@ -866,34 +1140,97 @@ onBeforeUnmount(() => {
 }
 
 .clean-label b {
-  color: var(--danger);
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .clean-input {
   width: 100%;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 12.5px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.clean-input::placeholder {
+  color: #c0c4cc;
 }
 
 .clean-input:focus {
-  border-color: var(--danger);
-  outline: none;
-  box-shadow: 0 0 0 3px var(--danger-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(43, 95, 217, 0.12);
 }
 
 .clean-error {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--danger);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .clean-foot {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
-  margin-top: 16px;
+  margin-top: 20px;
+}
+
+/* 取消是白底描边按钮，确认用主题蓝色实心按钮，两个按钮同高同圆角 */
+.clean-btn {
+  height: 32px;
+  min-width: 72px;
+  padding: 0 16px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.clean-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.clean-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.clean-btn.is-primary:hover:not(:disabled) {
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
+  color: #fff;
+}
+
+.clean-btn:disabled {
+  cursor: not-allowed;
+  border-color: var(--line);
+  background: #f7f8fa;
+  color: #c0c4cc;
+}
+
+.clean-btn.is-primary:disabled {
+  border-color: #c7d4f0;
+  background: #c7d4f0;
+  color: #fff;
+}
+
+/* 只做一次很短的淡入，不做位移和缩放，避免“动效感” */
+.clean-fade-enter-active,
+.clean-fade-leave-active {
+  transition: opacity 0.12s linear;
+}
+
+.clean-fade-enter-from,
+.clean-fade-leave-to {
+  opacity: 0;
 }
 </style>

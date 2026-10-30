@@ -24,27 +24,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 本地唯一的持久层：data/huibiao.db（SQLite）。
- *
- * 为什么是这个位置：数据库文件跟运行数据放一起（data 目录），既不在 src 里，也不进仓库，
- * 拷走整个 data 目录就能把数据带走；目录改 app.data-dir 就换位置，和主流单机服务
- * （./data 或 ./store 下放 app.db）的做法一致。
- *
- * 并发口径：开 WAL，读不挡写、写不挡读；写与写由 SQLite 串行，配合 busy_timeout 排队等待，
- * 不会一冲突就报错。所有多行写入都包在事务里，断电/中断只会回到操作前，不会留半截数据。
- */
+// 本地唯一的持久层：data/huibiao.db（SQLite）。
 @Component
 public class SqliteDb {
 
     private static final Logger log = LoggerFactory.getLogger(SqliteDb.class);
 
-    /** 一次数据库操作的函数式接口，参数是已经拿到的连接。 */
+    // 一次数据库操作的函数式接口，参数是已经拿到的连接。
     public interface SqlFn<T> {
         T apply(Connection connection) throws SQLException;
     }
 
-    /** 把一行结果集映射成对象。 */
+    // 把一行结果集映射成对象。
     public interface RowMapper<T> {
         T map(ResultSet rs) throws SQLException;
     }
@@ -109,7 +100,7 @@ public class SqliteDb {
         });
     }
 
-    /** 只读查询：连接用完就关，多个请求可以同时读。 */
+    // 只读查询：连接用完就关，多个请求可以同时读。
     public <T> T read(SqlFn<T> fn) {
         try (Connection connection = dataSource.getConnection()) {
             return fn.apply(connection);
@@ -118,7 +109,7 @@ public class SqliteDb {
         }
     }
 
-    /** 写入：整段包在一个事务里，要么全成功，要么回滚到操作前。 */
+    // 写入：整段包在一个事务里，要么全成功，要么回滚到操作前。
     public <T> T tx(SqlFn<T> fn) {
         try (Connection connection = dataSource.getConnection()) {
             boolean autoCommit = connection.getAutoCommit();
@@ -176,7 +167,7 @@ public class SqliteDb {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** 表里一条都没有：用来判断要不要把老版本的 JSON 数据导进来。 */
+    // 表里一条都没有：用来判断要不要把老版本的 JSON 数据导进来。
     public boolean isEmpty(String table) {
         return count("SELECT COUNT(*) FROM " + table) == 0;
     }
@@ -191,10 +182,7 @@ public class SqliteDb {
                 scope, toJson(value));
     }
 
-    /**
-     * 一次性状态标记（例如「示例任务是否已经初始化过」）。
-     * 存成 1/0，比判断某个文件是否存在更直接：用户把数据全删了也不会又冒出来。
-     */
+    // 一次性状态标记（例如「示例任务是否已经初始化过」）。
     public boolean flag(String scope) {
         return "1".equals(kv(scope));
     }
@@ -235,24 +223,21 @@ public class SqliteDb {
         }
     }
 
-    /** 列定义、修改记录这类「数组套对象」的结构：解析成 Map 列表，前端直接原样展示。 */
+    // 列定义、修改记录这类「数组套对象」的结构：解析成 Map 列表，前端直接原样展示。
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> jsonMapList(String json) {
         List<Map<String, Object>> list = (List<Map<String, Object>>) (List<?>) jsonList(json, Map.class);
         return list == null ? new ArrayList<>() : list;
     }
 
-    /** 单个 JSON 对象（例如审计日志的附加字段），解析失败按空 Map 处理。 */
+    // 单个 JSON 对象（例如审计日志的附加字段），解析失败按空 Map 处理。
     @SuppressWarnings("unchecked")
     public Map<String, Object> jsonMap(String json) {
         Map<String, Object> map = (Map<String, Object>) fromJson(json, Map.class);
         return map == null ? new LinkedHashMap<>() : map;
     }
 
-    /**
-     * 老版本把数据写成 JSON 文件。导入成功后把原文件改名成 *.migrated 留一份，
-     * 万一要回滚还能翻出来；之后再启动就只读写数据库。
-     */
+    // 老版本把数据写成 JSON 文件。导入成功后把原文件改名成 *.migrated 留一份，
     public boolean retireLegacy(Path legacy) {
         if (legacy == null || !Files.isRegularFile(legacy)) {
             return false;
@@ -285,10 +270,5 @@ public class SqliteDb {
                 ps.setString(index, String.valueOf(value));
             }
         }
-    }
-
-    /** 给外部拼装 Map 时用，保持字段顺序稳定，前端看起来不会跳。 */
-    public static Map<String, Object> ordered() {
-        return new LinkedHashMap<>();
     }
 }

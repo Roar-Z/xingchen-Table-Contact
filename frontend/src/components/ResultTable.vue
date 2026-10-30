@@ -1,10 +1,5 @@
 <script setup>
-/**
- * 结果表：后端分页 + 模糊查询。
- *
- * 数据来自任务的导出文件，和下载的 Excel 是同一份；每页 10 行，支持翻页、跳页、
- * 切换每页条数、按列搜索和空格分隔的多关键字查询，交互按 Excel 的使用习惯来设计。
- */
+// 结果表：后端分页 + 模糊查询。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
 import { api } from '../api'
@@ -105,7 +100,7 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;')
 }
 
-/** 把命中的关键字标黄，拼接前先转义，避免表格里的内容被当成 HTML 执行。 */
+// 把命中的关键字标黄，拼接前先转义，避免表格里的内容被当成 HTML 执行。
 function highlight(value) {
   const text = value == null ? '' : String(value)
   const tokens = keyword.value
@@ -230,7 +225,7 @@ function clearKeyword() {
   resetAndLoad()
 }
 
-/* ==================== 双击改单元格 ==================== */
+// ==================== 双击改单元格 ====================
 
 const editableSheet = computed(() => props.editable && !!props.sheetId)
 

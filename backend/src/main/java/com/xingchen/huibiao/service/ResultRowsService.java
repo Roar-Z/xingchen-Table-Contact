@@ -29,13 +29,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * 结果表的分页查询。
- *
- * 任务记录里只留了前 20 行预览，这里直接读任务导出目录里的 Excel，
- * 按“关键字 / 指定列 / 页码”切片返回，保证页面看到的和下载的文件是同一份数据。
- * 同一任务按文件修改时间缓存，改结果重新导出后缓存自动失效。
- */
+// 结果表的分页查询。
 @Service
 public class ResultRowsService {
 
@@ -48,7 +42,7 @@ public class ResultRowsService {
     private final TaskStore store;
     private final DataPaths paths;
 
-    /** 最多缓存 8 个任务的结果，够页面来回切；超过就淘汰最久没用的。 */
+    // 最多缓存 8 个任务的结果，够页面来回切；超过就淘汰最久没用的。
     private final Map<String, Snapshot> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Snapshot> eldest) {
@@ -135,9 +129,7 @@ public class ResultRowsService {
         }
     }
 
-    /**
-     * 优先读 .xlsx（POI 打开快、没有 65535 行限制），没有再用 .xls；异常日志不参与分页。
-     */
+    // 优先读 .xlsx（POI 打开快、没有 65535 行限制），没有再用 .xls；异常日志不参与分页。
     private Path preferredArtifact(TaskRecord task) {
         if (task.artifacts == null || task.artifacts.isEmpty()) {
             return null;
@@ -261,9 +253,7 @@ public class ResultRowsService {
         return numeric;
     }
 
-    /**
-     * 预览快照：导出文件被清理时至少还能搜前 20 行，页面上会标明数据不完整。
-     */
+    // 预览快照：导出文件被清理时至少还能搜前 20 行，页面上会标明数据不完整。
     private Snapshot previewSnapshot(TaskRecord task) {
         Snapshot snapshot = new Snapshot();
         snapshot.source = "preview";

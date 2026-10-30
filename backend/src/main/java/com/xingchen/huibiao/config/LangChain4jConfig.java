@@ -12,14 +12,7 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Duration;
 import java.util.List;
 
-/**
- * LangChain4j 是可选的：只有把 app.llm.enabled 打开才会创建模型。
- * 接的是 OpenAI 兼容协议，本地 Ollama、vLLM 或者内网网关都能用。
- * 模型只输出意图配置，不参与数值计算。
- *
- * 同时挂上 TokenMeter 监听器，把每次模型调用的 token 用量记进本轮运行，
- * 运行观测页才能算出单次任务成本。
- */
+// LangChain4j 是可选的：只有把 app.llm.enabled 打开才会创建模型。
 @Configuration
 public class LangChain4jConfig {
 

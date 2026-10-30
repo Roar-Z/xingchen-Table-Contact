@@ -12,20 +12,12 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 目标列的“拼接/派生”表达式。
- *
- * 源表列不够用时，允许一条映射不指向单个源列，而是写成表达式：
- *   {起始日期} {起始时间}   → 2026-04-27 20:00
- *   "加班"                 → 常量，引号可省略
- *   {天}*8                 → 按每天 8 小时换算
- * 花括号里必须是该源表真实存在的列名，猜不出来就整条丢弃，不会瞎填。
- */
+// 目标列的“拼接/派生”表达式。
 public final class ColumnExpressions {
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([^{}]+)}");
     private static final Pattern MULTIPLY = Pattern.compile("^\\{\\s*([^{}]+?)\\s*}\\s*\\*\\s*(\\d+(?:\\.\\d+)?)$");
-    /** 日期 + 时刻：`{起始日期} + {起始时间}`，合并成标准日期时间（yyyy-MM-dd HH:mm） */
+    // 日期 + 时刻：`{起始日期} + {起始时间}`，合并成标准日期时间（yyyy-MM-dd HH:mm）
     private static final Pattern DATE_TIME_SPLICE = Pattern.compile(
             "^\\{\\s*([^{}]+?)\\s*}\\s*\\+\\s*\\{\\s*([^{}]+?)\\s*}$");
     private static final int MAX_LENGTH = 200;
@@ -53,7 +45,7 @@ public final class ColumnExpressions {
         return new ColumnExpressions(Collections.emptyMap());
     }
 
-    /** 这个目标列是否有表达式（有的话就不再按内部字段取值）。 */
+    // 这个目标列是否有表达式（有的话就不再按内部字段取值）。
     public String exprOf(String target) {
         return target == null ? null : byTarget.get(target);
     }
@@ -66,7 +58,7 @@ public final class ColumnExpressions {
         return byTarget.keySet();
     }
 
-    /** 表达式里引用到的源表列名。 */
+    // 表达式里引用到的源表列名。
     public static Set<String> placeholders(String expr) {
         Set<String> set = new LinkedHashSet<>();
         if (expr == null) {
@@ -82,10 +74,7 @@ public final class ColumnExpressions {
         return set;
     }
 
-    /**
-     * 校验表达式：长度可控、引用的列都在给定表头里、不是空壳。
-     * 给 AI 建议做白名单用，手写的表达式也走同一套检查。
-     */
+    // 校验表达式：长度可控、引用的列都在给定表头里、不是空壳。
     public static boolean isValid(String expr, Set<String> headers) {
         if (TextUtils.isBlank(expr) || expr.length() > MAX_LENGTH) {
             return false;
@@ -98,9 +87,7 @@ public final class ColumnExpressions {
         return headers != null && headers.containsAll(used);
     }
 
-    /**
-     * 按一行数据算出单元格值；引用的列不存在时返回 null，调用方退回原来的取值方式。
-     */
+    // 按一行数据算出单元格值；引用的列不存在时返回 null，调用方退回原来的取值方式。
     public static String render(String expr, Map<String, String> row) {
         if (TextUtils.isBlank(expr) || row == null) {
             return null;

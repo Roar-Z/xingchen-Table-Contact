@@ -21,7 +21,7 @@ const rerunning = ref(false)
 const deleting = ref(false)
 let timer = null
 
-/* 结果表的自然语言修改：每句话存成一条修改记录，重算时一起重放 */
+// 结果表的自然语言修改：每句话存成一条修改记录，重算时一起重放
 const editInput = ref('')
 const editBusy = ref(false)
 const editError = ref('')
@@ -203,10 +203,7 @@ async function rerunTask() {
   }
 }
 
-/**
- * 一句话改结果：后端把话翻译成操作（改值 / 加减 / 删行 / 排序 / 加列），
- * 再按原源表重算、重放、重新导出，页面只负责展示结果和修改记录。
- */
+// 一句话改结果：后端把话翻译成操作（改值 / 加减 / 删行 / 排序 / 加列），
 // 「试试」里的句子只填进输入框，不直接发给模型
 function useEditSample(text) {
   if (editBusy.value) return

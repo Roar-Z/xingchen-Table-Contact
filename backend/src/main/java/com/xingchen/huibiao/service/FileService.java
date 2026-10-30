@@ -25,12 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * 上传文件落盘 + 元信息登记。源文件只读，处理时另开工作簿，不会改到原表。
- *
- * 索引是整体读写的列表，条数不多，落 SQLite 的 kv 表（scope = files）；
- * xlsx 本体仍留在 data/uploads 下，库里只存元信息，一个 db 文件能带走全部索引。
- */
+// 上传文件落盘 + 元信息登记。源文件只读，处理时另开工作簿，不会改到原表。
 @Service
 public class FileService {
 
@@ -54,7 +49,7 @@ public class FileService {
     private final SettingsService settings;
     private final List<FileMeta> files = new ArrayList<>();
 
-    /** 解析结果短缓存：一次规划里智能体和意图识别会各读一遍同一张表，缓存后只解析一次 */
+    // 解析结果短缓存：一次规划里智能体和意图识别会各读一遍同一张表，缓存后只解析一次
     private static final long SHEET_CACHE_TTL_MS = 60_000L;
     private final Map<String, CachedSheet> sheetCache = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -90,7 +85,7 @@ public class FileService {
         backfillDigests();
     }
 
-    /** 老版本的 files.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    // 老版本的 files.json 只在库里没有这份数据时导入一次，导完改名留档。
     private void migrateLegacy() {
         Path file = paths.filesFile();
         if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
@@ -107,10 +102,7 @@ public class FileService {
         }
     }
 
-    /**
-     * 给历史记录补上内容指纹：老的 files.json 没有 digest，补完之后新上传就能按内容判定重复。
-     * 这里只补指纹，不删历史记录——旧任务快照里还存着这些 file_id，删了会导致老任务读不到源表。
-     */
+    // 给历史记录补上内容指纹：老的 files.json 没有 digest，补完之后新上传就能按内容判定重复。
     private void backfillDigests() {
         int backfilled = 0;
         int duplicates = 0;
@@ -139,7 +131,7 @@ public class FileService {
         }
     }
 
-    /** 整份索引一次原子写入：数据库要么是写入前的样子，要么是写入后的样子。 */
+    // 整份索引一次原子写入：数据库要么是写入前的样子，要么是写入后的样子。
     private synchronized void save() {
         try {
             db.kvPut(SCOPE, files);
@@ -148,7 +140,7 @@ public class FileService {
         }
     }
 
-    /** 上传结果：duplicate=true 表示这个文件内容之前已经登记过，直接复用了已有那条。 */
+    // 上传结果：duplicate=true 表示这个文件内容之前已经登记过，直接复用了已有那条。
     public record UploadResult(FileMeta file, boolean duplicate) {
     }
 
@@ -200,13 +192,13 @@ public class FileService {
         return new UploadResult(register(fileId, original, storedName, target, bytes.length, role, digest), false);
     }
 
-    /** 按内容指纹找已登记的文件；旧记录没有指纹时按同大小重算一次并补写回去。 */
+    // 按内容指纹找已登记的文件；旧记录没有指纹时按同大小重算一次并补写回去。
     private FileMeta findByDigest(String digest, long size) {
         List<FileMeta> all = findAllByDigest(digest, size);
         return all.isEmpty() ? null : all.get(0);
     }
 
-    /** 找出所有内容一致的历史记录（历史上重复上传可能登记过多条）。 */
+    // 找出所有内容一致的历史记录（历史上重复上传可能登记过多条）。
     private List<FileMeta> findAllByDigest(String digest, long size) {
         List<FileMeta> matched = new ArrayList<>();
         synchronized (this) {
@@ -255,9 +247,7 @@ public class FileService {
         }
     }
 
-    /**
-     * 示例数据也从这里走，保证和用户上传的文件是同一条处理路径。
-     */
+    // 示例数据也从这里走，保证和用户上传的文件是同一条处理路径。
     public FileMeta registerExisting(Path source, String role) {
         String original = source.getFileName().toString();
         String ext = extOf(original);
@@ -303,13 +293,7 @@ public class FileService {
         return meta;
     }
 
-    /**
-     * 覆盖旧记录：用新上传的字节替换物理文件，再用当前解析规则重算表头、样例、场景，
-     * file_id 保持不变，这样历史任务里对这张表的引用继续有效。
-     *
-     * @param parsedOnce 同内容批量覆盖时，第一条记录已解析出来的结果；非空时其余记录直接复用它，
-     *                   避免几十条重复记录把同一张大表重复解析几十遍。
-     */
+    // 覆盖旧记录：用新上传的字节替换物理文件，再用当前解析规则重算表头、样例、场景，
     private FileMeta overwrite(FileMeta meta, byte[] bytes, String original, String role, String digest,
                                FileMeta parsedOnce) {
         Path target = paths.uploadPath(meta.storedName);
@@ -350,7 +334,7 @@ public class FileService {
         return meta;
     }
 
-    /** 把解析结果写进元数据：表头行、列、工作表清单、样例值、场景标签。 */
+    // 把解析结果写进元数据：表头行、列、工作表清单、样例值、场景标签。
     private void applyParsed(FileMeta meta, ExcelService.SheetData sheet, String role, long size, String digest) {
         meta.size = size;
         meta.digest = digest;

@@ -1,10 +1,5 @@
 <script setup>
-/**
- * 我的仓库 —— 表格文件清单
- *
- * 顶部右侧的「我的仓库」入口点进来：按名称、列名搜索，打开、下载、重命名、删除，
- * 右边一列是所有表格的操作日志，谁在什么时候改了什么一眼能看到。
- */
+// 我的仓库 —— 表格文件清单
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
@@ -28,7 +23,7 @@ const loading = ref(true)
 const error = ref('')
 const keyword = ref('')
 
-/* ---------------- 表格列表：服务端分页，一页 10 张 ---------------- */
+// ---------------- 表格列表：服务端分页，一页 10 张 ----------------
 const TABLE_PAGE_SIZE = 10
 const tablesPage = ref(1)
 const tablesPages = ref(1)
@@ -82,7 +77,7 @@ async function removeCheckedTables() {
   }
 }
 
-/* ---------------- 操作日志：服务端分页 + 勾选删除 ---------------- */
+// ---------------- 操作日志：服务端分页 + 勾选删除 ----------------
 const LOG_PAGE_SIZE = 10
 const logs = ref([])
 const logsPage = ref(1)

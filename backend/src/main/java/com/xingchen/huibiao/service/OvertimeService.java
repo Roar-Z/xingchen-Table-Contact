@@ -18,11 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * 加班记录筛选。ERP 导出的表有 3.6 万行，先按部门和日期过滤，再逐行校验时长。
- *
- * 和请假结算一样，输出列由模板翻译而来，不再按写死的列名判断。
- */
+// 加班记录筛选。ERP 导出的表有 3.6 万行，先按部门和日期过滤，再逐行校验时长。
 @Service
 public class OvertimeService {
 
@@ -230,9 +226,7 @@ public class OvertimeService {
         return rounded;
     }
 
-    /**
-     * 按内部字段键找映射，模板列叫“工号”还是“员工编号”都能对上。
-     */
+    // 按内部字段键找映射，模板列叫“工号”还是“员工编号”都能对上。
     private String mapped(TaskConfig config, String key, String fileId, String fallback) {
         if (config == null || config.mapping() == null) {
             return fallback;

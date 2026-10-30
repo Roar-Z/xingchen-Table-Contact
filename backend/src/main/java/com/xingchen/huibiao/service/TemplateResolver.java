@@ -4,24 +4,13 @@ import com.xingchen.huibiao.util.TextUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
-/**
- * 输出模板列到系统内部字段的对照表。
- *
- * 以前导出列写死在代码里，上传的模板只能拿来比对；现在先把模板列翻译成内部键
- * （工号、起始时间、合计小时……），结算服务再按这些键取值，所以用户传什么模板，
- * 导出就是什么列。翻译不了的列不会乱猜，直接留空并在结果里给出提示。
- */
+// 输出模板列到系统内部字段的对照表。
 @Component
 public class TemplateResolver {
 
-    /**
-     * fromSource：这一列的值来自源表的某一列，映射时需要选列。
-     * required：模板里有这一列时，源表必须能提供对应的数据，否则严格模式直接拦下。
-     */
+    // fromSource：这一列的值来自源表的某一列，映射时需要选列。
     public record Resolved(String key, boolean fromSource, boolean required) {
     }
 
@@ -105,9 +94,7 @@ public class TemplateResolver {
         };
     }
 
-    /**
-     * 找不到数据来源的模板列，按列顺序返回。
-     */
+    // 找不到数据来源的模板列，按列顺序返回。
     public List<String> unresolved(List<String> columns, String scene) {
         List<String> list = new ArrayList<>();
         for (String column : columns) {
@@ -116,23 +103,5 @@ public class TemplateResolver {
             }
         }
         return list;
-    }
-
-    /**
-     * 按模板列去重的固定值。免打卡这类列不用选源列，导出时直接写死。
-     */
-    public Map<String, String> fixedValues(List<String> columns, String scene) {
-        Map<String, String> map = new LinkedHashMap<>();
-        for (String column : columns) {
-            if ("no_clock".equals(keyOf(column, scene))) {
-                map.put(column, "是");
-            }
-        }
-        return map;
-    }
-
-    private String keyOf(String column, String scene) {
-        Resolved resolved = resolve(column, scene);
-        return resolved == null ? "" : resolved.key();
     }
 }

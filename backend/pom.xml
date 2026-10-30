@@ -59,6 +59,13 @@
             <artifactId>sqlite-jdbc</artifactId>
             <version>${sqlite.version}</version>
         </dependency>
+
+        <!-- 评测集：用 sample_data 里的真实表格跑一遍，断言列集/行数/产物，改规则后能看出退步 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -66,6 +73,14 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!-- 评测要读 3.8MB 的 .xls，默认堆在开着一堆进程的机器上可能 fork 不起来，固定 512m -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-Xms128m -Xmx512m</argLine>
+                </configuration>
             </plugin>
         </plugins>
     </build>

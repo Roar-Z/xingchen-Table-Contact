@@ -58,10 +58,7 @@ async function request(path, options = {}) {
   return res
 }
 
-/**
- * 出错时的中文说明：按市面常见的做法给结论 + 下一步动作，不把状态码丢给用户看。
- * 400 这类明确是输入问题的，说清「检查什么」；5xx 说「稍后重试」。
- */
+// 出错时的中文说明：按市面常见的做法给结论 + 下一步动作，不把状态码丢给用户看。
 function statusText(status) {
   if (status === 400) return '提交的内容有问题，请检查后重试'
   if (status === 401 || status === 403) return '没有权限执行该操作'
@@ -125,7 +122,7 @@ export const api = {
     return request(`/api/agent/experience/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
 
-  /* ==================== 运行观测 ==================== */
+  // ==================== 运行观测 ====================
 
   agentStats() {
     return request('/api/ops/stats')
@@ -157,12 +154,9 @@ export const api = {
     return request('/api/ops/audit/clear', { method: 'POST', body: JSON.stringify({ confirm }) })
   },
 
-  prepareDemo(preset) {
-    return request('/api/demo/prepare', { method: 'POST', body: JSON.stringify({ preset }) })
-  },
-
-  preview(payload) {
-    return request('/api/tasks/preview', { method: 'POST', body: JSON.stringify(payload) })
+  // 删除所有表格数据：整库清空，表格文件、表格日志和撤销快照一起删
+  clearAllSheets(confirm) {
+    return request('/api/ops/sheets/clear', { method: 'POST', body: JSON.stringify({ confirm }) })
   },
 
   createTask(payload) {
@@ -209,14 +203,16 @@ export const api = {
     return `${BASE}/api/tasks/${encodeURIComponent(taskId)}/download/${encodeURIComponent(artifact)}`
   },
 
-  /* ==================== 智能体模式：跨系统桥接 ==================== */
+  // ==================== 智能体模式：跨系统桥接 ====================
 
   // 上传整个数据集：一个 zip，或者文件夹里选中的一批 Excel
-  bridgeCreate(files, name, source = 'files') {
+  bridgeCreate(files, name, source = 'files', access = 'auto') {
     const fd = new FormData()
     Array.from(files || []).forEach((file) => fd.append('files', file))
     fd.append('name', name || '')
     fd.append('source', source)
+    // 可执行权限在上传时就定下来：手动审批要赶在“方案出完”之前生效
+    fd.append('access', access || 'auto')
     return request('/api/bridge/datasets', { method: 'POST', body: fd })
   },
 
@@ -228,14 +224,6 @@ export const api = {
     return request(`/api/bridge/datasets/${encodeURIComponent(id)}`)
   },
 
-  // 自然语言业务指令 → 规划方案，只规划不执行
-  bridgePlan(id, instruction) {
-    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/plan`, {
-      method: 'POST',
-      body: JSON.stringify({ instruction })
-    })
-  },
-
   // 清理最近记录：ids 为空数组表示清空全部；返回删除条数与剩余列表
   bridgeDelete(ids = []) {
     return request('/api/bridge/datasets/delete', {
@@ -244,13 +232,70 @@ export const api = {
     })
   },
 
-  bridgeRun(id) {
-    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/run`, { method: 'POST' })
+  // 全自主处理：推断目标 → 规划 → 执行 → 按验收标准自检 → 修正/回滚，一次请求跑完
+  // goal 可空：空表示让智能体按数据结构自己推断（会优先沿用同类数据集上次达标的目标）
+  bridgeAuto(id, goal) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/auto`, {
+      method: 'POST',
+      body: JSON.stringify({ instruction: goal || '' })
+    })
+  },
+
+  // 真实进度：since 是已经拿到的事件序号，只返回之后的新事件
+  bridgeEvents(id, since = 0) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/events?since=${since}`)
+  },
+
+  // 取消这一单：只置标记，当前这一步结束后停止，已跑出的结果照常交付
+  bridgeCancel(id) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+  },
+
+  // 可执行权限：manual 手动审批 / auto 自动审批 / full 完全访问
+  bridgeAccess(id, access) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/access`, {
+      method: 'POST',
+      body: JSON.stringify({ access })
+    })
+  },
+
+  // 手动审批的确认执行：方案已就绪，点完直接开跑
+  bridgeApprove(id) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/approve`, { method: 'POST' })
+  },
+
+  // 会话式追问：只是问就只回答，带改动会改完方案重跑
+  bridgeChat(id, instruction) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ instruction })
+    })
   },
 
   // kind=ok 标准表 / kind=anomaly 异常清单
   bridgeRows(id, params = {}) {
     return request(`/api/bridge/datasets/${encodeURIComponent(id)}/rows${query(params)}`)
+  },
+
+  // ---------------- 知识库：用户上传的制度、口径说明、对照表 ----------------
+  // 上传多份文档（Word / Excel / PDF / 文本），后端取字、切片、入本地库
+  bridgeKnowledgeUpload(files) {
+    const fd = new FormData()
+    Array.from(files || []).forEach((file) => fd.append('files', file))
+    return request('/api/bridge/knowledge', { method: 'POST', body: fd })
+  },
+
+  bridgeKnowledge() {
+    return request('/api/bridge/knowledge')
+  },
+
+  bridgeRemoveKnowledge(id) {
+    return request(`/api/bridge/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  },
+
+  // 试检索：给一句业务目标，看看会引用到哪几段（用来验证文档真的被用上了）
+  bridgeSearchKnowledge(q) {
+    return request(`/api/bridge/knowledge/search${query({ q })}`)
   },
 
   bridgeRules() {
@@ -269,11 +314,68 @@ export const api = {
     return request('/api/bridge/standard-fields')
   },
 
-  bridgeDownloadUrl(id, artifact) {
-    return `${BASE}/api/bridge/datasets/${encodeURIComponent(id)}/download/${encodeURIComponent(artifact)}`
+  // 智能体模式的经验记忆：跑成功的配置会自动沉淀，规划时优先复用
+  bridgeExperiences() {
+    return request('/api/bridge/experiences')
   },
 
-  /* ==================== 表格智作 ==================== */
+  bridgeDeleteExperience(id) {
+    return request(`/api/bridge/experiences${query({ id })}`, { method: 'DELETE' })
+  },
+
+  // 人工给经验打分：有用 / 不适用。连续两次不适用会下线
+  bridgeFeedbackExperience(id, useful) {
+    return request(`/api/bridge/experiences/${encodeURIComponent(id)}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ useful })
+    })
+  },
+
+  // 打开导出文件所在文件夹（Windows 会定位到该文件），返回服务端实际使用的目录
+  bridgeReveal(id, artifact) {
+    return request(`/api/bridge/datasets/${encodeURIComponent(id)}/reveal`, {
+      method: 'POST',
+      body: JSON.stringify({ artifact: artifact || '' })
+    })
+  },
+
+  // 目录浏览：不给 path 就列默认导出目录 + 磁盘根，给了就列子目录
+  bridgeBrowse(path) {
+    const suffix = path ? `?path=${encodeURIComponent(path)}` : ''
+    return request(`/api/bridge/export-dir/browse${suffix}`)
+  },
+
+  // 选择器里新建文件夹：在 path 下建一个名叫 name 的目录，回 { path, error }
+  bridgeMkdir(path, name) {
+    return request('/api/bridge/export-dir/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ path, name })
+    })
+  },
+
+  // 选择器里右键重命名：把 path 这个目录改名成 name，回 { path, error }
+  bridgeRename(path, name) {
+    return request('/api/bridge/export-dir/rename', {
+      method: 'POST',
+      body: JSON.stringify({ path, name })
+    })
+  },
+
+  // 导出位置：custom 为用户自定义目录（空=用默认）。
+  bridgeExportDir() {
+    return request('/api/bridge/export-dir')
+  },
+
+  // 设置导出目录：传空字符串恢复默认（前端目录下的 downloads）；
+  // 带上 dataset_id 时，后端会把这一单已交付的导出文件搬到新目录，不重跑
+  bridgeSetExportDir(dir, datasetId = '') {
+    return request('/api/bridge/export-dir', {
+      method: 'POST',
+      body: JSON.stringify({ dir: dir || '', dataset_id: datasetId || '' })
+    })
+  },
+
+  // ==================== 表格智作 ====================
 
   // 我的表格：名称或列名模糊匹配
   sheets(params = {}) {
@@ -283,10 +385,6 @@ export const api = {
   // 仓库列表服务端分页（一页 10 张），同时返回全库汇总
   sheetPage({ page = 1, pageSize = 10, q = '' } = {}) {
     return request(`/api/sheets/page${query({ page, page_size: pageSize, q })}`)
-  },
-
-  sheetTemplates() {
-    return request('/api/sheets/templates')
   },
 
   // 所有表格的操作日志，按时间倒序分页；服务端只保留最近 100 条
@@ -316,13 +414,6 @@ export const api = {
     const fd = new FormData()
     Array.from(files || []).forEach((file) => fd.append('files', file))
     return request('/api/sheets/upload', { method: 'POST', body: fd })
-  },
-
-  sheetFromTemplate(templateId, name) {
-    return request('/api/sheets/from-template', {
-      method: 'POST',
-      body: JSON.stringify({ template_id: templateId, name })
-    })
   },
 
   sheetBlank(name, columns) {

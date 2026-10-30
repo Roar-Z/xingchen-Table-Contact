@@ -17,11 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 产出文件。每个任务一个目录，文件名保持业务人员熟悉的样子：
- * HR导入_缺勤_20260427.xls、HR导入_缺勤_20260427.xlsx、异常日志_20260427.xlsx。
- * 同名文件落在不同任务目录里，不会互相覆盖。
- */
+// 产出文件。每个任务一个目录，文件名保持业务人员熟悉的样子：
 @Service
 public class ExportService {
 

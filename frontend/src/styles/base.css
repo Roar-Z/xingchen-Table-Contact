@@ -171,6 +171,36 @@ button:disabled {
   background: var(--danger);
 }
 
+/* 离线不是故障：用琥珀色，与真正连不上时的红色区分开 */
+.net-dot.offline {
+  background: var(--warn);
+}
+
+/* 页面里的离线徽标：和「服务运行正常」同一位置，断网时换成它 */
+.offline-chip {
+  display: inline-flex;
+  flex: none;
+  gap: 5px;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid #f0d9a8;
+  border-radius: 11px;
+  background: #fdf6e5;
+  color: #9a6a12;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.offline-chip i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
 /* 侧边栏底部：连接状态在左，设置齿轮贴最右 */
 .foot-row {
   display: flex;
@@ -295,12 +325,14 @@ button.foot-menu-item {
   cursor: pointer;
 }
 
+/* 危险项在菜单里不再整列标红：平时用中性灰，悬停才转红，
+ * 避免一打开菜单先被一列红字抢走注意力，也贴合企业后台的克制风格 */
 .foot-menu-item.is-danger {
-  color: var(--danger);
+  color: var(--ink-2);
 }
 
 .foot-menu-item.is-danger:hover {
-  background: var(--danger-soft);
+  background: #f4f6f9;
   color: var(--danger);
 }
 

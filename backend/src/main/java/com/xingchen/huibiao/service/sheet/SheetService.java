@@ -16,7 +16,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -28,12 +27,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 表格智作的核心服务：上传、建表、融合、自然语言改表、单元格编辑都在这里。
- *
- * 每一张表始终是一个 xlsx，改完立即落盘；页面分页读的也是这个文件，
- * 所以下载、预览、修改三处看到的数据永远一致。
- */
+// 表格智作的核心服务：上传、建表、融合、自然语言改表、单元格编辑都在这里。
 @Service
 public class SheetService {
 
@@ -41,7 +35,6 @@ public class SheetService {
     private static final int MAX_REVISIONS = 30;
     private static final int MAX_PAGE_SIZE = 200;
     private static final int MAX_CACHE = 10;
-    private static final int SAMPLE_ROWS = 8;
 
     private final SheetStore store;
     private final SheetAgentService agent;
@@ -60,7 +53,7 @@ public class SheetService {
         this.paths = paths;
     }
 
-    /* ==================== 查询 ==================== */
+    // ==================== 查询 ====================
 
     public List<Map<String, Object>> list(String keyword) {
         String text = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
@@ -77,10 +70,7 @@ public class SheetService {
         return out;
     }
 
-    /**
-     * 仓库列表的服务端分页：默认每页 10 张，和市面主流表格的翻页习惯一致。
-     * 顶部三块统计始终按仓库全集算，不然翻到第 2 页数字会跟着变。
-     */
+    // 仓库列表的服务端分页：默认每页 10 张，和市面主流表格的翻页习惯一致。
     public Map<String, Object> page(String keyword, int page, int pageSize) {
         List<Map<String, Object>> all = list(keyword);
         int size = Math.max(1, Math.min(pageSize, 50));
@@ -126,10 +116,7 @@ public class SheetService {
         return SheetTemplates.items();
     }
 
-    /**
-     * 仓库操作日志：所有表格的日志合在一起按时间倒序，服务端分页。
-     * 总量由 SheetStore 控制在最近 100 条，这里只负责切页。
-     */
+    // 仓库操作日志：所有表格的日志合在一起按时间倒序，服务端分页。
     public Map<String, Object> logs(int page, int pageSize) {
         List<Map<String, Object>> all = new ArrayList<>();
         for (SheetRecord record : store.all()) {
@@ -177,10 +164,7 @@ public class SheetService {
         return out;
     }
 
-    /**
-     * 删日志：ids 为空表示清空全部，否则只删勾中的那几条。
-     * 日志和表格文件分开存，删日志不会动表格数据。
-     */
+    // 删日志：ids 为空表示清空全部，否则只删勾中的那几条。
     public Map<String, Object> deleteLogs(List<String> ids) {
         Set<String> target = new HashSet<>();
         if (ids != null) {
@@ -212,9 +196,7 @@ public class SheetService {
         return out;
     }
 
-    /**
-     * 分页 + 模糊查询。和任务结果表保持同一套返回结构，前端复用同一个表格组件。
-     */
+    // 分页 + 模糊查询。和任务结果表保持同一套返回结构，前端复用同一个表格组件。
     public Map<String, Object> page(String id, int page, int pageSize, String keyword, String column) {
         SheetRecord record = store.require(id);
         Table table = cachedTable(record);
@@ -270,7 +252,7 @@ public class SheetService {
         return path;
     }
 
-    /* ==================== 新建 ==================== */
+    // ==================== 新建 ====================
 
     public List<Map<String, Object>> upload(MultipartFile[] files) {
         if (files == null || files.length == 0) {
@@ -336,10 +318,7 @@ public class SheetService {
         return detail(record.id);
     }
 
-    /**
-     * 把智能体任务的产出表收进「我的仓库」：任务一跑完，结果表就能在这里继续改、继续下载。
-     * 同一个任务重跑只覆盖它原来那张表，不会每跑一次就多堆一张。
-     */
+    // 把智能体任务的产出表收进「我的仓库」：任务一跑完，结果表就能在这里继续改、继续下载。
     public Map<String, Object> archiveFromTask(TaskRecord task) {
         if (task == null || task.id == null || task.id.isBlank()) {
             throw new IllegalArgumentException("缺少任务号，无法归档");
@@ -385,9 +364,7 @@ public class SheetService {
         return record.summary();
     }
 
-    /**
-     * 产出里优先收 xlsx：xls 是给 HR 导入的老格式，xlsx 才是能继续编辑的那一份。
-     */
+    // 产出里优先收 xlsx：xls 是给 HR 导入的老格式，xlsx 才是能继续编辑的那一份。
     private Path outputWorkbookOf(TaskRecord task) {
         Path dir = paths.taskOutputDir(task.id);
         Path fallback = null;
@@ -412,9 +389,7 @@ public class SheetService {
         throw new IllegalArgumentException("任务没有产出可归档的表格文件，看看任务详情里的日志");
     }
 
-    /**
-     * 一句话建表或多表融合。sheetIds 为空时按 append 合并所有表，否则按用户点选的范围。
-     */
+    // 一句话建表或多表融合。sheetIds 为空时按 append 合并所有表，否则按用户点选的范围。
     public Map<String, Object> compose(String instruction, List<String> sheetIds) {
         if (instruction == null || instruction.isBlank()) {
             throw new IllegalArgumentException("先说一句要做什么表");
@@ -590,7 +565,7 @@ public class SheetService {
         return out;
     }
 
-    /* ==================== 修改 ==================== */
+    // ==================== 修改 ====================
 
     public Map<String, Object> revise(String id, String instruction) {
         if (instruction == null || instruction.isBlank()) {
@@ -769,10 +744,7 @@ public class SheetService {
         log.info("删除表格 {}（{}）", record.id, record.name);
     }
 
-    /**
-     * 批量删除：勾选多张表后一次删掉，每张都走同一套「先归档日志再删文件」的流程。
-     * 个别表已经被别处删掉的不影响其它几张，结果里分开回报。
-     */
+    // 批量删除：勾选多张表后一次删掉，每张都走同一套「先归档日志再删文件」的流程。
     public Map<String, Object> deleteMany(List<String> ids) {
         List<String> deleted = new ArrayList<>();
         List<String> missing = new ArrayList<>();
@@ -796,7 +768,17 @@ public class SheetService {
         return out;
     }
 
-    /* ==================== 操作执行 ==================== */
+    // 「删除所有表格数据」：整库清空表格仓库。
+    public Map<String, Object> clearAll() {
+        int cleared = store.clearAll();
+        cache.clear();
+        log.warn("已清空表格仓库：{} 张表、日志和表格文件全部删除", cleared);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("cleared", cleared);
+        return out;
+    }
+
+    // ==================== 操作执行 ====================
 
     private int applyOps(Table table, List<Map<String, Object>> ops) {
         int changed = 0;
@@ -975,7 +957,7 @@ public class SheetService {
         return false;
     }
 
-    /* ==================== 存储与缓存 ==================== */
+    // ==================== 存储与缓存 ====================
 
     private SheetRecord newRecord(String name, String origin) {
         SheetRecord record = new SheetRecord();
@@ -987,9 +969,7 @@ public class SheetService {
         return record;
     }
 
-    /**
-     * 同名表格容易在「一句话指定表」时打架，重名就自动加编号。
-     */
+    // 同名表格容易在「一句话指定表」时打架，重名就自动加编号。
     private String uniqueName(String name, String exceptId) {
         String base = name == null || name.isBlank() ? "表格" : name.trim();
         Set<String> used = new HashSet<>();
@@ -1020,10 +1000,7 @@ public class SheetService {
         store.put(record);
     }
 
-    /**
-     * 修改前留一份快照。快照按补齐后的表写，空行虽然不写单元格，
-     * 但行数会跟着记下来，撤销时按这个行数还原。
-     */
+    // 修改前留一份快照。快照按补齐后的表写，空行虽然不写单元格，
     private void backup(SheetRecord record, Table table) {
         Path source = paths.sheetPath(record.id);
         if (!Files.isRegularFile(source)) {

@@ -22,10 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 异步执行器。新建任务接口只负责排队，真正的读表、计算、写文件都在这里跑，
- * 前端靠轮询任务详情看进度。
- */
+// 异步执行器。新建任务接口只负责排队，真正的读表、计算、写文件都在这里跑，
 @Component
 public class TaskRunner {
 
@@ -162,11 +159,7 @@ public class TaskRunner {
         }
     }
 
-    /**
-     * 把用户用自然语言提过的修改重放到本次结果上。
-     * 修改记录是整体重算后再按顺序执行的，所以每次重跑的结果都一致；应用失败不阻断交付，
-     * 只在轨迹和日志里说明。
-     */
+    // 把用户用自然语言提过的修改重放到本次结果上。
     private void applyRevisions(TaskRecord task, ProcessResult result) {
         int changed;
         try {
@@ -187,10 +180,7 @@ public class TaskRunner {
         addLog(task, "ok", "已按你的话修改结果：" + summary);
     }
 
-    /**
-     * 智能体执行阶段的自愈：结果是 0 行时，说明映射和源表对不上（多半是人工指错了列，
-     * 或者换了模板）。这时用它识别出来的推荐映射重建配置重跑一次，只试一次。
-     */
+    // 智能体执行阶段的自愈：结果是 0 行时，说明映射和源表对不上（多半是人工指错了列，
     private ProcessResult selfRepair(TaskRecord task, CreateTaskRequest request,
                                      IntentResult plan, ProcessResult broken) {
         if (broken.outputRows > 0 || broken.totalRows == 0) {
@@ -238,9 +228,7 @@ public class TaskRunner {
         return retry;
     }
 
-    /**
-     * 把解析结果里的建议映射转成可执行配置，只保留真正能对上源列的条目。
-     */
+    // 把解析结果里的建议映射转成可执行配置，只保留真正能对上源列的条目。
     private List<MappingEntry> mappingFromPlan(IntentResult plan) {
         List<MappingEntry> list = new ArrayList<>();
         if (plan.mapping == null) {
@@ -288,9 +276,7 @@ public class TaskRunner {
         return true;
     }
 
-    /**
-     * 跑成功就把这套配置记成经验，下次遇到同类表先复用，不用再从头配。
-     */
+    // 跑成功就把这套配置记成经验，下次遇到同类表先复用，不用再从头配。
     private void remember(TaskRecord task, IntentResult plan, CreateTaskRequest request) {
         try {
             List<ExperienceStore.Entry> entries = new ArrayList<>();
@@ -318,10 +304,7 @@ public class TaskRunner {
         }
     }
 
-    /**
-     * 记忆要以“最终生效的映射”为准：执行期自愈会把修好的映射写回 task.config，
-     * 如果这里还读原始请求，就会把错映射学进经验库。
-     */
+    // 记忆要以“最终生效的映射”为准：执行期自愈会把修好的映射写回 task.config，
     private List<MappingEntry> mappingEntries(TaskRecord task, CreateTaskRequest request, IntentResult plan) {
         Object snapshot = task.config == null ? null : task.config.get("mapping");
         if (snapshot instanceof List<?> list && !list.isEmpty()) {
@@ -417,10 +400,7 @@ public class TaskRunner {
         task.logs.add(new TaskRecord.LogEntry(TimeUtils.clock(), level, message));
     }
 
-    /**
-     * 把结果表归档进「我的仓库」。归档失败不影响任务本身，只在任务日志里提示一句，
-     * 结果文件仍然可以从任务详情下载。
-     */
+    // 把结果表归档进「我的仓库」。归档失败不影响任务本身，只在任务日志里提示一句，
     private void archive(TaskRecord task) {
         try {
             Map<String, Object> sheet = sheetService.archiveFromTask(task);

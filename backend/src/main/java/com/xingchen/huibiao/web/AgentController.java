@@ -20,12 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 智能体入口。和 /api/tasks/analyze 的区别是它多返回一段执行轨迹，
- * 老的 analyze 接口保留，前端或第三方脚本还能继续用。
- *
- * 每次编排都会写一条运行记录（供观测页统计）和一条审计日志（谁、什么时候、做了什么）。
- */
+// 智能体入口。和 /api/tasks/analyze 的区别是它多返回一段执行轨迹，
 @RestController
 @RequestMapping("/api/agent")
 public class AgentController {

@@ -21,22 +21,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 智能体运行观测，落 SQLite 的 agent_runs 表。
- *
- * 每个字段单独成列，成功率 / 兜底率 / Token / 步数全部用 SQL 聚合算出来，
- * 分页用 LIMIT + OFFSET，不再把整份记录读进内存再切片。
- * 本地只保留最近 100 条，超出后按主键删最旧的。
- */
+// 智能体运行观测，落 SQLite 的 agent_runs 表。
 @Service
 public class AgentRunStore {
 
     private static final Logger log = LoggerFactory.getLogger(AgentRunStore.class);
-    /** 本地只保留最近 100 条运行记录，超出后丢弃最旧的，避免长期运行把磁盘写满。 */
+    // 本地只保留最近 100 条运行记录，超出后丢弃最旧的，避免长期运行把磁盘写满。
     static final int MAX_RUNS = 100;
     private static final int RECENT_LIMIT = 12;
 
-    /** 分页每页上限，防止前端一次把 100 条全拉走。 */
+    // 分页每页上限，防止前端一次把 100 条全拉走。
     private static final int MAX_PAGE_SIZE = 50;
 
     private final DataPaths paths;
@@ -240,10 +234,7 @@ public class AgentRunStore {
         return out;
     }
 
-    /**
-     * 运行观测里的「清理数据」：运行记录清空后统计自然归零，
-     * 面板会回到“还没有运行记录”的初始状态。
-     */
+    // 运行观测里的「清理数据」：运行记录清空后统计自然归零，
     public synchronized int clear() {
         return db.tx(connection -> {
             int count;
@@ -263,10 +254,7 @@ public class AgentRunStore {
         return db.list("SELECT * FROM agent_runs ORDER BY at DESC, id DESC LIMIT ?", this::mapRun, size);
     }
 
-    /**
-     * 运行记录分页：新的在前，返回 items / total / page / pages。
-     * 前端只拿当前页，统计口径仍按全部留存记录算。
-     */
+    // 运行记录分页：新的在前，返回 items / total / page / pages。
     public synchronized Map<String, Object> page(int page, int pageSize) {
         int size = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         int total = (int) db.count("SELECT COUNT(*) FROM agent_runs");
@@ -329,7 +317,7 @@ public class AgentRunStore {
         return text.length() <= 300 ? text : text.substring(0, 300) + "…";
     }
 
-    /** 一次配置编排的运行记录。 */
+    // 一次配置编排的运行记录。
     public static class Run {
         public String at;
         public String status = "ok";

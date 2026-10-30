@@ -3,7 +3,6 @@ package com.xingchen.huibiao.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xingchen.huibiao.config.DataPaths;
 import com.xingchen.huibiao.config.SqliteDb;
-import com.xingchen.huibiao.model.MappingField;
 import com.xingchen.huibiao.model.RuleItem;
 import com.xingchen.huibiao.model.TemplateItem;
 import com.xingchen.huibiao.util.TextUtils;
@@ -14,16 +13,13 @@ import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
-/**
- * 设置：别名、计算口径、自定义模板，整体读写，落 SQLite 的 kv 表（scope = settings）。
- * 数据量很小，不值得单开表；放进 kv 后同样「一个 db 文件带走全部数据」，写入也是原子的。
- */
+// 设置：别名、计算口径、自定义模板，整体读写，落 SQLite 的 kv 表（scope = settings）。
 @Service
 public class SettingsService {
 
@@ -96,9 +92,12 @@ public class SettingsService {
         if (loaded.templates != null) {
             data.templates = loaded.templates;
         }
+        if (loaded.exportDir != null) {
+            data.exportDir = loaded.exportDir;
+        }
     }
 
-    /** 老版本的 settings.json 只在库里没有这份数据时导入一次，导完改名留档。 */
+    // 老版本的 settings.json 只在库里没有这份数据时导入一次，导完改名留档。
     private void migrateLegacy() {
         Path file = paths.settingsFile();
         if (db.kv(SCOPE) != null || !Files.isRegularFile(file)) {
@@ -125,43 +124,8 @@ public class SettingsService {
         }
     }
 
-    /**
-     * 只返回用户补充的别名。系统自带别名在 HeaderCatalog 里，不重复落盘。
-     */
-    public Map<String, List<String>> extraAliases() {
-        return data.aliases;
-    }
-
     public Map<String, List<String>> mergedAliases() {
         return catalog.mergedAliases(data.aliases);
-    }
-
-    public List<MappingField> mappingFields() {
-        List<MappingField> result = new ArrayList<>();
-        Map<String, List<String>> merged = mergedAliases();
-        for (HeaderCatalog.FieldDef def : catalog.fields()) {
-            List<String> aliases = merged.getOrDefault(def.field(), def.aliases());
-            result.add(new MappingField(def.field(), def.label(), aliases, aliases.size()));
-        }
-        return result;
-    }
-
-    public synchronized List<MappingField> addAlias(String field, String alias) {
-        if (catalog.byField(field) == null) {
-            throw new IllegalArgumentException("没有这个标准字段：" + field);
-        }
-        String value = TextUtils.trim(alias);
-        if (value.isEmpty() || value.length() > 24) {
-            throw new IllegalArgumentException("别名不能为空，也不要超过 24 个字");
-        }
-        List<String> list = data.aliases.computeIfAbsent(field, k -> new ArrayList<>());
-        boolean exists = catalog.mergedAliases(data.aliases).getOrDefault(field, List.of()).stream()
-                .anyMatch(a -> TextUtils.norm(a).equals(TextUtils.norm(value)));
-        if (!exists) {
-            list.add(value);
-            save();
-        }
-        return mappingFields();
     }
 
     public List<RuleItem> rules() {
@@ -174,34 +138,45 @@ public class SettingsService {
         return result;
     }
 
-    public synchronized void setRule(String key, Object value) {
-        boolean exists = defaults.stream().anyMatch(r -> r.key().equals(key));
-        if (!exists) {
-            throw new IllegalArgumentException("没有这条规则：" + key);
-        }
-        data.rules.put(key, value);
-        save();
-    }
-
     public List<TemplateItem> templates() {
         List<TemplateItem> result = new ArrayList<>(builtInTemplates);
         result.addAll(data.templates);
         return result;
     }
 
-    public synchronized TemplateItem addTemplate(String name, String scene, List<String> columns, String description) {
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("模板名称不能为空");
+    // 智能体模式的导出目录：空字符串表示用默认目录（前端工程下的 downloads）。
+    public String exportDir() {
+        return data.exportDir == null ? "" : data.exportDir.trim();
+    }
+
+    // 设置导出目录：传空字符串表示恢复默认。
+    public synchronized String setExportDir(String dir) {
+        String value = TextUtils.trim(dir == null ? "" : dir);
+        if (value.isEmpty()) {
+            data.exportDir = "";
+            save();
+            return "";
         }
-        if (columns == null || columns.isEmpty()) {
-            throw new IllegalArgumentException("模板至少要有 1 列");
+        Path path = Paths.get(value);
+        if (!path.isAbsolute()) {
+            throw new IllegalArgumentException("请填绝对路径，例如 D:\\表格导出");
         }
-        TemplateItem item = new TemplateItem("tpl_" + UUID.randomUUID().toString().substring(0, 8),
-                name.trim(), scene == null || scene.isBlank() ? "leave" : scene, false,
-                description == null ? "" : description, columns);
-        data.templates.add(item);
+        if (value.length() > 260) {
+            throw new IllegalArgumentException("路径太长了，换一个短一点的目录");
+        }
+        try {
+            Files.createDirectories(path);
+            if (!Files.isWritable(path)) {
+                throw new IllegalArgumentException("这个目录不可写：" + value);
+            }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("这个目录无法创建或写入：" + value);
+        }
+        data.exportDir = path.toAbsolutePath().normalize().toString();
         save();
-        return item;
+        return data.exportDir;
     }
 
     public TemplateItem builtIn(String id) {
@@ -240,5 +215,7 @@ public class SettingsService {
         public Map<String, List<String>> aliases = new LinkedHashMap<>();
         public Map<String, Object> rules = new LinkedHashMap<>();
         public List<TemplateItem> templates = new ArrayList<>();
+        // 智能体模式的导出目录，空表示用默认的前端 downloads 目录
+        public String exportDir = "";
     }
 }

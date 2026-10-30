@@ -24,10 +24,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 把一句人话翻译成可执行的配置。规则先跑，识别不出来的部分才问大模型。
- * 大模型不碰数字：年假余额、工时、日期区间都由后面的 Java 代码算。
- */
+// 把一句人话翻译成可执行的配置。规则先跑，识别不出来的部分才问大模型。
 @Service
 public class IntentService {
 
@@ -61,9 +58,7 @@ public class IntentService {
         return analyze(brief, refs, null);
     }
 
-    /**
-     * templateFileId 有值就按上传的模板决定导出列，否则用内置模板。
-     */
+    // templateFileId 有值就按上传的模板决定导出列，否则用内置模板。
     public IntentResult analyze(String brief, List<FileRef> refs, String templateFileId) {
         if (refs == null || refs.isEmpty()) {
             throw new IllegalArgumentException("至少上传一个源表");
@@ -182,9 +177,7 @@ public class IntentService {
         return settings.builtIn("leave".equals(scene) ? "tpl_absence" : "tpl_overtime");
     }
 
-    /**
-     * 模板表头可能有空列或重复列，导出的列必须唯一，否则写文件时会互相覆盖。
-     */
+    // 模板表头可能有空列或重复列，导出的列必须唯一，否则写文件时会互相覆盖。
     private List<String> cleanColumns(List<String> headers) {
         List<String> list = new ArrayList<>();
         for (String header : headers) {
@@ -284,10 +277,7 @@ public class IntentService {
         }
     }
 
-    /**
-     * “合计小时”优先挂源表的“小时”列。有些 OA 导出的小时列是 0，真正有效的是“天”，
-     * 这种情况下才退回天列，由结算服务按每日工时折算。
-     */
+    // “合计小时”优先挂源表的“小时”列。有些 OA 导出的小时列是 0，真正有效的是“天”，
     private String preferredHoursColumn(ExcelService.SheetData sheet, Map<String, String> fields) {
         String hours = fields.get("hours");
         String days = fields.get("days");
@@ -545,12 +535,7 @@ public class IntentService {
         }
     }
 
-    /**
-     * 时间类目标列的拼接：起始时间/终止时间要的是“日期 + 时刻”，而源表往往把日期和时刻拆成两列。
-     * 规则和模型都倾向于只选带日期的列（否则可能指到只有 20:00 的列），结果这一格只剩日期。
-     * 这里在映射定稿后统一补成 `{日期列} + {时刻列}`：只要源表确实有这两列就拼接，
-     * 按标准日期时间输出；模型自己给出拼接表达式时以模型为准（不再覆盖）。
-     */
+    // 时间类目标列的拼接：起始时间/终止时间要的是“日期 + 时刻”，而源表往往把日期和时刻拆成两列。
     private void spliceDateTimeTargets(IntentResult result, List<Loaded> loaded) {
         if (result == null || result.targetTemplate == null || result.mapping == null) {
             return;
@@ -600,10 +585,7 @@ public class IntentService {
         return TextUtils.parseDate(samples == null ? null : samples.get(column)) != null;
     }
 
-    /**
-     * 找只有时分秒、解析不出日期的时刻列（起始时间/结束时间这种）。
-     * 有多个时刻列时优先配“同一侧”的那一列：起始日期配起始时间，结束日期配结束时间。
-     */
+    // 找只有时分秒、解析不出日期的时刻列（起始时间/结束时间这种）。
     private static String findTimeOnlyColumn(List<String> headers, Map<String, String> samples, String dateColumn) {
         if (headers == null) {
             return null;
@@ -629,12 +611,12 @@ public class IntentService {
         return fallback;
     }
 
-    /** 只有时分秒、解析不出日期的时刻列（起始时间/结束时间这种）。 */
+    // 只有时分秒、解析不出日期的时刻列（起始时间/结束时间这种）。
     private static String findTimeOnlyColumn(List<String> headers, Map<String, String> samples) {
         return findTimeOnlyColumn(headers, samples, null);
     }
 
-    /** 起始/开始 → start，终止/结束 → end，用来把日期列和时刻列配成一对。 */
+    // 起始/开始 → start，终止/结束 → end，用来把日期列和时刻列配成一对。
     private static String pairKeyOf(String column) {
         if (TextUtils.isBlank(column)) {
             return null;
@@ -649,9 +631,7 @@ public class IntentService {
         return null;
     }
 
-    /**
-     * 给模型看的源表清单：文件名、表头和每列的第一个非空样例，列太多时截断控制 prompt 长度。
-     */
+    // 给模型看的源表清单：文件名、表头和每列的第一个非空样例，列太多时截断控制 prompt 长度。
     private String describeSources(List<Loaded> loaded) {
         StringBuilder sb = new StringBuilder();
         for (Loaded item : loaded) {
@@ -697,9 +677,7 @@ public class IntentService {
         return map;
     }
 
-    /**
-     * 每列第一个非空样例，用来判断模型指的那一列到底带不带日期。
-     */
+    // 每列第一个非空样例，用来判断模型指的那一列到底带不带日期。
     private Map<String, Map<String, String>> samplesByFileId(List<Loaded> loaded) {
         Map<String, Map<String, String>> map = new LinkedHashMap<>();
         for (Loaded item : loaded) {
@@ -718,9 +696,7 @@ public class IntentService {
         return map;
     }
 
-    /**
-     * 目标列对应的内部字段，用来判断哪些目标列本质上是日期。
-     */
+    // 目标列对应的内部字段，用来判断哪些目标列本质上是日期。
     private Map<String, String> keyByTarget(IntentResult result) {
         Map<String, String> map = new LinkedHashMap<>();
         if (result.targetTemplate == null) {
@@ -735,10 +711,7 @@ public class IntentService {
         return map;
     }
 
-    /**
-     * 只有能翻译成内部字段、并且确实从源表取值的模板列才允许模型匹配；
-     * “免打卡”这类固定值列不需要源列，直接排除。
-     */
+    // 只有能翻译成内部字段、并且确实从源表取值的模板列才允许模型匹配；
     private Map<String, Boolean> mappableTargets(IntentResult result) {
         Map<String, Boolean> map = new LinkedHashMap<>();
         if (result.targetTemplate == null) {
@@ -754,10 +727,7 @@ public class IntentService {
         return map;
     }
 
-    /**
-     * 把模型返回的映射合并进规则结果：目标列、文件名、源列名都必须能在当前上下文里对上，
-     * 任何一项对不上就丢弃，避免模型编造列名。模型给出的列优先于规则猜测。
-     */
+    // 把模型返回的映射合并进规则结果：目标列、文件名、源列名都必须能在当前上下文里对上，
     static int mergeModelMapping(IntentResult result, JsonNode root,
                                  Map<String, String> fileIdByLabel,
                                  Map<String, List<String>> columnsByFileId,
@@ -870,10 +840,7 @@ public class IntentService {
         return applied;
     }
 
-    /**
-     * 模型给的文件名允许写成去掉扩展名、带目录、全角或空格的形态，逐个宽松比对一次。
-     * 只有长度 ≥3 时才做包含匹配，避免短名误配到别的表。
-     */
+    // 模型给的文件名允许写成去掉扩展名、带目录、全角或空格的形态，逐个宽松比对一次。
     private static String resolveFileId(Map<String, String> fileIdByLabel, String raw) {
         String label = TextUtils.trim(raw);
         if (label == null || label.isEmpty()) {
@@ -908,9 +875,7 @@ public class IntentService {
         return null;
     }
 
-    /**
-     * TextUtils.norm 会删掉点号，扩展名只能按后缀剥：oa导出请假单xlsx → oa导出请假单。
-     */
+    // TextUtils.norm 会删掉点号，扩展名只能按后缀剥：oa导出请假单xlsx → oa导出请假单。
     private static String stripExt(String norm) {
         return norm == null ? "" : norm.replaceAll("(xlsx|xlsm|xls|csv)$", "");
     }
@@ -919,9 +884,7 @@ public class IntentService {
         return "start".equals(key) || "end".equals(key) || "date".equals(key);
     }
 
-    /**
-     * 表头写着“时间/时刻”、样例里又解析不出日期，才算只有时分秒的列。
-     */
+    // 表头写着“时间/时刻”、样例里又解析不出日期，才算只有时分秒的列。
     private static boolean looksTimeOnly(String column, Map<String, String> samples) {
         String name = TextUtils.norm(column);
         if (name.contains("日期") || name.contains("date")) {

@@ -6,6 +6,7 @@ import TaskDetail from './views/TaskDetail.vue'
 import SheetWorkbench from './views/SheetWorkbench.vue'
 import SheetRepo from './views/SheetRepo.vue'
 import OpsView from './views/OpsView.vue'
+import DocView from './views/DocView.vue'
 import NotFound from './views/NotFound.vue'
 
 const routes = [
@@ -17,6 +18,19 @@ const routes = [
   { path: '/sheets', name: 'sheets', component: SheetWorkbench, meta: { title: '表格智作' } },
   { path: '/sheets/repo', name: 'sheet-repo', component: SheetRepo, meta: { title: '我的仓库' } },
   { path: '/ops', name: 'ops', component: OpsView, meta: { title: '运行观测' } },
+  // 文档在应用内的右侧内容区打开，meta.doc 交给 DocView 去决定嵌哪一页静态文档
+  {
+    path: '/docs/product',
+    name: 'doc-product',
+    component: DocView,
+    meta: { title: '产品设计文档', doc: { title: '产品设计文档', src: '/docs/product.html', word: '/docs/product.docx', icon: 'book' } }
+  },
+  {
+    path: '/docs/dev',
+    name: 'doc-dev',
+    component: DocView,
+    meta: { title: '开发文档', doc: { title: '开发文档', src: '/docs/dev.html', word: '/docs/dev.docx', icon: 'code' } }
+  },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFound, meta: { title: '页面不存在' } }
 ]
 

@@ -10,10 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-/**
- * 前端开发时走 Vite 代理，直接调接口时放开本机跨域。
- * 如果 frontend/dist 已经构建过，后端也能把静态资源带起来，演示时只开一个进程。
- */
+// 前端开发时走 Vite 代理，直接调接口时放开本机跨域。
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
@@ -43,6 +40,9 @@ public class WebConfig implements WebMvcConfigurer {
                     .setCacheControl(CacheControl.noCache());
             registry.addResourceHandler("/favicon.ico")
                     .addResourceLocations(dist.toUri().toString());
+            // 开发/设计文档只有一份，放在前端的 public/docs 里，构建后就在 dist/docs
+            registry.addResourceHandler("/docs/**")
+                    .addResourceLocations(dist.resolve("docs").toUri().toString());
         }
     }
 }

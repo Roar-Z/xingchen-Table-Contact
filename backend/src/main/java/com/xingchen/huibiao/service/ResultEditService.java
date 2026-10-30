@@ -22,23 +22,14 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 结果表的“自然语言修改”。
- *
- * 用户写一句“第 3 行开始时间改成 09:00”，这里先把它翻译成结构化操作
- * （set / math / delete / sort / add_column / drop_column），再按顺序作用在
- * 重新算出来的结果行上。行号、条件、列名都由确定性代码执行，模型只负责听懂话。
- *
- * 修改记录存在 task.config.edits 里：重新执行时按原顺序重放，所以下载到的文件和
- * 屏幕上的预览始终是同一份结果。
- */
+// 结果表的“自然语言修改”。
 @Service
 public class ResultEditService {
 
     private static final Logger log = LoggerFactory.getLogger(ResultEditService.class);
-    /** 给模型看的样例行数，控制 prompt 长度。 */
+    // 给模型看的样例行数，控制 prompt 长度。
     private static final int SAMPLE_ROWS = 6;
-    /** 一个任务最多保留多少条修改记录，避免配置无限膨胀。 */
+    // 一个任务最多保留多少条修改记录，避免配置无限膨胀。
     public static final int MAX_REVISIONS = 20;
 
     private static final Set<String> TYPES = Set.of(
@@ -66,7 +57,7 @@ public class ResultEditService {
         this.chatModel = chatModel;
     }
 
-    /* ==================== 听懂一句话 ==================== */
+    // ==================== 听懂一句话 ====================
 
     public ResultRevision parse(String instruction, TaskRecord task) {
         if (TextUtils.isBlank(instruction)) {
@@ -163,9 +154,7 @@ public class ResultEditService {
         return ops;
     }
 
-    /**
-     * 没有模型时按常见句式兜底。覆盖“第 N 行/某列等于某值 + 改成”、加减、删除、排序、加列。
-     */
+    // 没有模型时按常见句式兜底。覆盖“第 N 行/某列等于某值 + 改成”、加减、删除、排序、加列。
     private List<Map<String, Object>> parseByRules(String instruction, List<String> columns) {
         String text = instruction.trim();
         List<Map<String, Object>> ops = new ArrayList<>();
@@ -240,7 +229,7 @@ public class ResultEditService {
         return ops;
     }
 
-    /* ==================== 校验与描述 ==================== */
+    // ==================== 校验与描述 ====================
 
     private void validate(List<Map<String, Object>> ops, List<String> columns) {
         for (Map<String, Object> op : ops) {
@@ -358,7 +347,7 @@ public class ResultEditService {
         };
     }
 
-    /* ==================== 落盘格式 ==================== */
+    // ==================== 落盘格式 ====================
 
     public List<Map<String, Object>> revisionsOf(TaskRecord task) {
         List<Map<String, Object>> list = new ArrayList<>();
@@ -389,12 +378,9 @@ public class ResultEditService {
         return raw instanceof List<?> ? (List<Map<String, Object>>) raw : List.of();
     }
 
-    /* ==================== 真正改结果 ==================== */
+    // ==================== 真正改结果 ====================
 
-    /**
-     * 把 task.config.edits 里的每一条修改按顺序重放到结果行上。
-     * 返回一共改动了多少行，0 表示没有修改记录。
-     */
+    // 把 task.config.edits 里的每一条修改按顺序重放到结果行上。
     public int apply(TaskRecord task, ProcessResult result) {
         List<Map<String, Object>> revisions = rawRevisions(task);
         if (revisions.isEmpty() || result.rows.isEmpty()) {
@@ -603,9 +589,7 @@ public class ResultEditService {
         return "ne".equals(op) ? !actual.equals(expected) : actual.equals(expected);
     }
 
-    /**
-     * 改值时的类型：数值列写数字，其它列写文本，保证导出的 Excel 单元格类型不乱。
-     */
+    // 改值时的类型：数值列写数字，其它列写文本，保证导出的 Excel 单元格类型不乱。
     private Object convertValue(ProcessResult result, String column, String value) {
         if (TextUtils.isBlank(value)) {
             return "";
@@ -657,7 +641,7 @@ public class ResultEditService {
         return column;
     }
 
-    /* ==================== 句式小工具 ==================== */
+    // ==================== 句式小工具 ====================
 
     private Map<String, Object> scopeOf(String text, List<String> columns) {
         Map<String, Object> scope = new LinkedHashMap<>();
@@ -729,7 +713,7 @@ public class ResultEditService {
         return best;
     }
 
-    /** 动词前离它最近的那一列，就是用户要改的目标列。 */
+    // 动词前离它最近的那一列，就是用户要改的目标列。
     private String columnBefore(String text, int limit, List<String> columns) {
         String best = null;
         int bestIndex = -1;

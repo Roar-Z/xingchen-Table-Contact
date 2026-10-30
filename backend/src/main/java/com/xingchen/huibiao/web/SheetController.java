@@ -23,9 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 表格智作的接口。前端只对接这一组，命名和任务那边保持一致（分页、搜索、下载）。
- */
+// 表格智作的接口。前端只对接这一组，命名和任务那边保持一致（分页、搜索、下载）。
 @RestController
 @RequestMapping("/api/sheets")
 public class SheetController {
@@ -41,7 +39,7 @@ public class SheetController {
         return sheets.list(keyword);
     }
 
-    /** 仓库列表分页：page 从 1 开始，page_size 默认 10（前端一页 10 张）。 */
+    // 仓库列表分页：page 从 1 开始，page_size 默认 10（前端一页 10 张）。
     @GetMapping("/page")
     public Map<String, Object> page(@RequestParam(value = "page", defaultValue = "1") int page,
                                     @RequestParam(value = "page_size", defaultValue = "10") int pageSize,
@@ -60,9 +58,7 @@ public class SheetController {
         return sheets.logs(page, pageSize);
     }
 
-    /**
-     * 删日志：ids 传了就只删这几条，传空数组就是清空全部。
-     */
+    // 删日志：ids 传了就只删这几条，传空数组就是清空全部。
     @PostMapping("/logs/delete")
     public Map<String, Object> deleteLogs(@RequestBody(required = false) Map<String, Object> body) {
         List<String> ids = body != null && body.get("ids") instanceof List<?> list
@@ -104,9 +100,7 @@ public class SheetController {
         return sheets.blank(body.get("name") == null ? null : String.valueOf(body.get("name")), columns);
     }
 
-    /**
-     * 一句话建表或多表融合。sheet_ids 传了就只在这几张表之间做。
-     */
+    // 一句话建表或多表融合。sheet_ids 传了就只在这几张表之间做。
     @PostMapping("/compose")
     public Map<String, Object> compose(@RequestBody Map<String, Object> body) {
         String instruction = body.get("instruction") == null ? "" : String.valueOf(body.get("instruction"));
@@ -173,7 +167,7 @@ public class SheetController {
         return Map.of("deleted", id);
     }
 
-    /** 批量删除：body {"ids":[...]}，仓库列表勾选多张后一次删掉 */
+    // 批量删除：body {"ids":[...]}，仓库列表勾选多张后一次删掉
     @PostMapping("/delete")
     public Map<String, Object> deleteMany(@RequestBody(required = false) Map<String, Object> body) {
         List<String> ids = new ArrayList<>();
