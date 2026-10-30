@@ -8,6 +8,7 @@ import com.xingchen.huibiao.service.ExcelService;
 import com.xingchen.huibiao.service.HeaderCatalog;
 import com.xingchen.huibiao.service.SettingsService;
 import com.xingchen.huibiao.service.governance.AgentRunStore;
+import com.xingchen.huibiao.service.governance.TokenMeter;
 import com.xingchen.huibiao.util.TextUtils;
 import com.xingchen.huibiao.util.TimeUtils;
 import dev.langchain4j.model.chat.ChatModel;
@@ -154,11 +155,13 @@ public class BridgeAgentService {
     private final BridgeRun run;
     // 运行观测：智能体这一单跑完也要记一笔，和普通模式的编排同一张表
     private final AgentRunStore agentRuns;
+    // token 计量：智能体这一单里每次模型请求的用量也要算进观测，否则累计 TOKEN 一直是 0
+    private final TokenMeter tokenMeter;
 
     public BridgeAgentService(BridgeStore store, ExcelService excel, HeaderCatalog catalog,
                               SettingsService settings, ObjectMapper mapper, ObjectProvider<ChatModel> chat,
                               BridgeMemory memory, DataPaths paths, BridgeRun run, BridgeKnowledge knowledge,
-                              AgentRunStore agentRuns) {
+                              AgentRunStore agentRuns, TokenMeter tokenMeter) {
         this.store = store;
         this.excel = excel;
         this.catalog = catalog;
@@ -170,6 +173,7 @@ public class BridgeAgentService {
         this.run = run;
         this.knowledge = knowledge;
         this.agentRuns = agentRuns;
+        this.tokenMeter = tokenMeter;
     }
 
     // 1. 上传 + 扫描
@@ -350,6 +354,7 @@ public class BridgeAgentService {
         plan.notes.addAll(duplicateKindNotes(dataset, reps));
         plan.notes.addAll(missingNotes(text, plan.aligns));
         applyLesson(plan, lesson, dataset, labels);
+        plan.lessonHit = lesson != null;
         run.event(dataset.id, "plan", "align_fields", "字段对齐：" + plan.aligns.size() + " 个列名 → "
                 + labels.size() + " 个标准字段", crossSystemHint(dataset, plan.aligns));
 
@@ -1524,6 +1529,8 @@ public class BridgeAgentService {
                 if (!sleep(RETRY_BASE_MS)) break;
             }
         }
+        // 模型没调通，这一单改由规则兜底：观测页要能看出“这次是规则跑出来的”
+        run.noteModelFailure(id);
         throw new IllegalStateException("大模型调用失败：" + (last == null ? "未知原因" : last.getMessage()), last);
     }
 
@@ -1562,6 +1569,8 @@ public class BridgeAgentService {
     private BridgeDataset guarded(String id, java.util.function.Supplier<BridgeDataset> body) {
         beginRun(id);
         long started = System.currentTimeMillis();
+        // 模型调用都发生在本线程上，整单结束后统一结算 token 与调用次数
+        tokenMeter.begin();
         BridgeDataset done = null;
         try {
             done = body.get();
@@ -1570,13 +1579,17 @@ public class BridgeAgentService {
             markFailed(id, e);
             throw e;
         } finally {
+            TokenMeter.Metered used = tokenMeter.end();
+            int calls = run.modelCalls(id);
+            boolean fallback = run.fallback(id);
             run.finish(id);
-            recordRun(done, System.currentTimeMillis() - started);
+            recordRun(done, System.currentTimeMillis() - started, used, calls, fallback);
         }
     }
 
     // 记进运行观测：只出方案还没执行的不算一次跑单，其余按交付/失败记
-    private void recordRun(BridgeDataset done, long durationMs) {
+    private void recordRun(BridgeDataset done, long durationMs, TokenMeter.Metered used,
+                           int modelCalls, boolean fallback) {
         try {
             if (done != null && "awaiting".equals(done.status)) {
                 return;
@@ -1586,11 +1599,17 @@ public class BridgeAgentService {
             record.status = done != null && "done".equals(done.status) ? "ok" : "failed";
             record.durationMs = durationMs;
             record.files = done == null ? 0 : done.tables.size();
+            // 观测页的 TOKEN、模型调用次数、规则兜底、经验命中都从这里来
+            record.tokensIn = used.inputTokens();
+            record.tokensOut = used.outputTokens();
+            record.modelCalls = modelCalls > 0 ? modelCalls : used.modelCalls();
+            record.fallback = fallback;
             BridgeDataset.Plan plan = done == null ? null : done.plan;
             if (plan != null) {
                 record.mode = plan.mode == null || plan.mode.isBlank() ? "rules" : plan.mode;
                 record.steps = plan.steps == null ? 0 : plan.steps.size();
                 record.fixes = plan.attempts == null ? 0 : plan.attempts.size();
+                record.experienceHit = plan.lessonHit;
                 record.note = clip(plan.summary);
                 if (plan.steps != null) {
                     for (BridgeDataset.Step step : plan.steps) {

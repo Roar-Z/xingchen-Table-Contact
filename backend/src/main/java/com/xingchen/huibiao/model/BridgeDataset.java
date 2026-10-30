@@ -90,6 +90,8 @@ public class BridgeDataset {
         public List<String> notes = new ArrayList<>();
         // rules / llm
         public String mode = "rules";
+        // 这一单有没有用到经验记忆里同类数据集的配置，运行观测的「经验命中」按它算
+        public boolean lessonHit;
         public boolean confirmed;
         public String plannedAt;
     }

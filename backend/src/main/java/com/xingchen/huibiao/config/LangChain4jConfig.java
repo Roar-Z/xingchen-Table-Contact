@@ -21,14 +21,15 @@ public class LangChain4jConfig {
     @ConditionalOnProperty(name = "app.llm.enabled", havingValue = "true")
     public ChatModel chatModel(AppProperties properties, TokenMeter tokenMeter) {
         AppProperties.Llm llm = properties.getLlm();
-        log.info("启用 LangChain4j 语义解析，模型 {}，地址 {}", llm.getModel(), llm.getBaseUrl());
+        log.info("启用 LangChain4j 语义解析，模型 {}，地址 {}，超时 {} 秒",
+                llm.getModel(), llm.getBaseUrl(), llm.getTimeoutSeconds());
         return OpenAiChatModel.builder()
                 .baseUrl(llm.getBaseUrl())
                 .apiKey(llm.getApiKey())
                 .modelName(llm.getModel())
                 .temperature(0.1)
-                .timeout(Duration.ofSeconds(25))
-                .maxRetries(1)
+                .timeout(Duration.ofSeconds(llm.getTimeoutSeconds()))
+                .maxRetries(llm.getMaxRetries())
                 .listeners(List.of(tokenMeter))
                 .build();
     }

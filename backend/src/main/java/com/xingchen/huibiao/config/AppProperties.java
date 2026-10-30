@@ -68,6 +68,10 @@ public class AppProperties {
         private String baseUrl = "http://127.0.0.1:11434/v1";
         private String apiKey = "not-needed";
         private String model = "qwen2.5:14b";
+        // 单次模型请求的超时：云端大模型遇到长提示词经常要等二三十秒，25 秒偏紧
+        private int timeoutSeconds = 60;
+        // 框架内部的重试次数：业务层自己已经重试一次，框架再重试只会把等待时间翻倍
+        private int maxRetries = 0;
 
         public boolean isEnabled() {
             return enabled;
@@ -99,6 +103,22 @@ public class AppProperties {
 
         public void setModel(String model) {
             this.model = model;
+        }
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(int timeoutSeconds) {
+            this.timeoutSeconds = timeoutSeconds;
+        }
+
+        public int getMaxRetries() {
+            return maxRetries;
+        }
+
+        public void setMaxRetries(int maxRetries) {
+            this.maxRetries = maxRetries;
         }
     }
 }

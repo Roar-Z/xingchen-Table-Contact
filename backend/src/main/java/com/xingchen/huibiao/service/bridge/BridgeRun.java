@@ -44,6 +44,8 @@ public class BridgeRun {
         boolean hasSeat;
         String stage = "准备中";
         int modelCalls;
+        // 模型没调通、这一单改由规则兜底：观测页的「规则兜底率」按这个算
+        boolean fallback;
     }
 
     // 事件上限：一单最多三轮，正常不会超过几十条，这里只是兜底，防止异常循环把内存撑大
@@ -223,6 +225,25 @@ public class BridgeRun {
         Live live = runs.get(id);
         if (live == null) return;
         live.modelCalls++;
+    }
+
+    // 模型调用没成功、这一单退回规则处理：记下来，运行观测里要能看出“兜底过”
+    public void noteModelFailure(String id) {
+        Live live = runs.get(id);
+        if (live == null) return;
+        live.fallback = true;
+    }
+
+    // 这一单真实发起了几次模型请求（含失败的），写运行观测时用
+    public int modelCalls(String id) {
+        Live live = runs.get(id);
+        return live == null ? 0 : live.modelCalls;
+    }
+
+    // 这一单是否发生过“模型失败 → 规则兜底”
+    public boolean fallback(String id) {
+        Live live = runs.get(id);
+        return live != null && live.fallback;
     }
 
     // 轮询

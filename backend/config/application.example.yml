@@ -15,3 +15,9 @@ app:
     api-key: ${HUBIAO_LLM_API_KEY:not-needed}
 
     model: ${HUBIAO_LLM_MODEL:qwen2.5:14b}
+
+    # 单次请求超时（秒）。云端模型处理长提示词常要 30 秒以上，
+    # 超时后这一轮会退回规则处理，日志里会出现「request timed out」
+    timeout-seconds: ${HUBIAO_LLM_TIMEOUT_SECONDS:60}
+    # 框架内部重试次数；业务层已经自带一次重试，这里保持 0 就不会把等待翻倍
+    max-retries: ${HUBIAO_LLM_MAX_RETRIES:0}
